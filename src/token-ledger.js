@@ -332,6 +332,8 @@ export function createTokenLedger({
         cost: 0,
         byTier: { peak: 0, off: 0 },
         estimated: false,
+        // 金额里有没有用到「厂商官方参考价」的迁移行（第三方渠道实际单价可能不同）
+        reference: false,
         dropped: 0,
         // 被淘汰采样里最大的 seq：一旦更新的投影基线覆盖到它，这些桶就已经包含在
         // 基线里了，再相加就是重复计费（见 evictionCovered()）。
@@ -346,6 +348,7 @@ export function createTokenLedger({
       acc.cost += p.cost.total;
       acc.byTier[p.rates.tier] += p.cost.total;
       acc.estimated ||= p.rates.estimated;
+      acc.reference ||= p.rates.reference === true;
       acc.dropped += 1;
       if (sample.key) acc.key = sample.key;
       evicted.set(sample.sessionId, acc);
@@ -519,6 +522,7 @@ export function createTokenLedger({
           allCost: 0,
           allByTier: { peak: 0, off: 0 },
           estimated: false,
+          reference: false,
           turns: new Map(),
           models: new Set()
         };
@@ -528,6 +532,7 @@ export function createTokenLedger({
       const isLive = !base || s.seq > base.seq;
       const p = priceUsage(s.buckets, { model: s.model, at: s.t || now(), table: priceTable });
       entry.estimated ||= p.rates.estimated;
+      entry.reference ||= p.rates.reference === true;
       entry.allCost += p.cost.total;
       entry.allByTier[p.rates.tier] += p.cost.total;
       if (isLive) {
@@ -580,6 +585,7 @@ export function createTokenLedger({
       turns: 0,
       steps: 0,
       estimated: false,
+      reference: false,
       lastAt: 0,
       firstAt: 0,
       models: []
@@ -599,11 +605,13 @@ export function createTokenLedger({
       view.byTier.peak += (entry?.liveByTier.peak ?? 0) + (gone?.byTier.peak ?? 0);
       view.byTier.off += (entry?.liveByTier.off ?? 0) + (gone?.byTier.off ?? 0);
       view.estimated ||= (entry?.estimated ?? false) || (gone?.estimated ?? false);
+      view.reference ||= (entry?.reference ?? false) || (gone?.reference ?? false);
       if (base) {
         const p = priceUsage(base.buckets, { model: base.model, at: base.t || now(), table: priceTable });
         cost += p.cost.total;
         view.byTier[p.rates.tier] += p.cost.total;
         view.estimated ||= p.rates.estimated;
+        view.reference ||= p.rates.reference === true;
       }
       view.cost += cost;
       if (entry) {
@@ -669,7 +677,8 @@ export function createTokenLedger({
       turns: 0,
       steps: 0,
       conversations: conversations.length,
-      estimated: false
+      estimated: false,
+      reference: false
     };
     for (const c of conversations) {
       totals.buckets = addBuckets(totals.buckets, c.buckets);
@@ -681,6 +690,7 @@ export function createTokenLedger({
       totals.turns += c.turns;
       totals.steps += c.steps;
       totals.estimated ||= c.estimated;
+      totals.reference ||= c.reference === true;
     }
     const totalTok = totalTokensOf(totals.buckets);
     const inputTok = totals.buckets.cacheMiss + totals.buckets.cacheHit + totals.buckets.cacheWrite;
@@ -700,7 +710,13 @@ export function createTokenLedger({
         peakWindows: priceTable.peakWindows,
         peakWeekdays: priceTable.peakWeekdays,
         holidayCount: (priceTable.holidays ?? []).length,
-        models: Object.fromEntries(Object.entries(priceTable.models).map(([name, m]) => [name, { label: m.label, off: m.off }]))
+        models: Object.fromEntries(Object.entries(priceTable.models).map(([name, m]) => [name, {
+          label: m.label,
+          off: m.off,
+          // 逐模型峰谷倍率（迁移来的第三方模型多为 1）与「官方参考价」来源标记
+          peakMultiplier: Number.isFinite(Number(m.peakMultiplier)) ? Number(m.peakMultiplier) : priceTable.peakMultiplier,
+          ...(m.reference === true ? { reference: true, source: m.source ?? null } : {})
+        }]))
       },
       totals: {
         ...totals,
@@ -777,6 +793,7 @@ export function createTokenLedger({
     }
     const totals = { cost: 0, tokens: 0, turns: 0, steps: 0 };
     let estimated = false;
+    let reference = false;
     let countedSamples = 0;
     // 逐桶的「轮次」去重集合（键 = sessionId|turn）。
     // steps 数的是计费请求（同一回合的多个 step / 重试各算一条），turns 数的是真正的对话轮次；
@@ -835,6 +852,7 @@ export function createTokenLedger({
       totals.tokens += tokens;
       totals.steps += 1;
       estimated ||= p.rates.estimated;
+      reference ||= p.rates.reference === true;
       countedSamples += 1;
     }
     for (const row of rows) {
@@ -867,6 +885,7 @@ export function createTokenLedger({
       totals,
       busiest: busiest ? { t: busiest.t, cost: busiest.cost, tokens: busiest.tokens } : null,
       estimated,
+      reference,
       countedSamples,
       // 时间轴之外的部分：图上画不出来，控制台会单独说明，避免"图上加起来 ≠ 总花费"引起误会。
       offChartCost: Math.max(0, ledgerCost - totals.cost),
@@ -893,7 +912,8 @@ export function createTokenLedger({
         ...s.buckets,
         cost: p.cost.total,
         tier: p.rates.tier,
-        estimated: p.rates.estimated
+        estimated: p.rates.estimated,
+        reference: p.rates.reference === true
       });
     }
     return out;

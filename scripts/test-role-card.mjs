@@ -106,3 +106,17 @@ test('真实人格卡可用，且筛选不丢公共内容', () => {
   // 二代注入的文本里不应再出现一代的分条机制
   assert.doesNotMatch(v2, /空格分隔（例如|\[SILENT\]/);
 });
+
+test('roles/ 下每张人格卡都能解析，且不超过默认注入上限', () => {
+  const dir = new URL('../roles/', import.meta.url);
+  const files = fs.readdirSync(dir).filter((name) => name.endsWith('.md') && name !== 'README.md');
+  assert.ok(files.length >= 2, `roles/ 下应至少有两张人格卡，实际 ${files.length}`);
+  for (const name of files) {
+    const raw = fs.readFileSync(new URL(name, dir), 'utf8');
+    for (const mode of ['v1', 'v2']) {
+      const text = selectRoleText(raw, mode);
+      assert.ok(text.length > 0, `${name} 在 ${mode} 下注入了空文本`);
+      assert.ok(text.length <= 6000, `${name} 在 ${mode} 下 ${text.length} 字符，超过默认注入上限 6000`);
+    }
+  }
+});

@@ -66,17 +66,38 @@ export function isFirstPartyProvider(provider) {
   return FIRST_PARTY_PROVIDERS.includes(clean(provider));
 }
 
-/** 已知表里的看图能力：'yes' | 'unknown'（目录没有否定信息，所以不会给出 'no'）。 */
-export function knownVision(provider, model) {
-  return KNOWN_VISION[`${clean(provider)}/${clean(model)}`] ? 'yes' : 'unknown';
+import { VISIONS_BY_ROUTE, VISIONS_BY_MODEL } from './model-vision-table.js';
+
+/**
+ * 迁移自 QQAgent（MIT）的「能不能看图」判定表，见 src/model-vision-table.js。
+ *
+ * 为什么要单独一个开关：那张表的**模型级**判定是跨渠道的（「这个名字的模型能看图」），
+ * 而本文件原有的 KNOWN_VISION 只认「提供方/模型」这一对。命名相同 ≠ 端点相同 ——
+ * 同一个模型名在中转站上完全可能被换成别的端点。所以模型级判定默认**不生效**，
+ * 要管理员显式打开 `config.json` 的 `dsh.visionFromReference`。
+ * 渠道级那张表（VISIONS_BY_ROUTE）只在渠道 id 恰好同名时才命中，同样写在下面。
+ */
+
+/** 已知表里的看图能力：'yes' | 'no' | 'unknown'（目录没有否定信息，所以未知不会给出 'no'）。 */
+export function knownVision(provider, model, { fromReference = false } = {}) {
+  const route = `${clean(provider)}/${clean(model)}`;
+  if (KNOWN_VISION[route] === true) return 'yes';
+  if (KNOWN_VISION[route] === false) return 'no';
+  const routeRef = VISIONS_BY_ROUTE[route];
+  if (routeRef) return routeRef.vision ? 'yes' : 'no';
+  if (fromReference) {
+    const byModel = VISIONS_BY_MODEL[clean(model)];
+    if (byModel) return byModel.vision ? 'yes' : 'no';
+  }
+  return 'unknown';
 }
 
 /** 实际是否把图片交给模型：手动指定优先，auto 时只有已知能看图才给。 */
-export function canSeeImages({ provider, model, vision } = {}) {
+export function canSeeImages({ provider, model, vision, visionFromReference } = {}) {
   const setting = normalizeVisionSetting(vision);
   if (setting === 'yes') return true;
   if (setting === 'no') return false;
-  return knownVision(provider, model) === 'yes';
+  return knownVision(provider, model, { fromReference: visionFromReference === true }) === 'yes';
 }
 
 /** 价格表是否覆盖：只收录 DeepSeek 自家价目，第三方同名模型也不算。 */
@@ -177,7 +198,7 @@ export function resolveSelectModelParams(dshCfg = {}, catalog = null) {
 }
 
 /** 控制台用的目录视图：每个模型带上档位、默认档、看图能力（已知表）、价格是否覆盖、是否第三方。 */
-export function buildCatalogView(catalog, { priceTable } = {}) {
+export function buildCatalogView(catalog, { priceTable, fromReference = false } = {}) {
   const providers = (catalog?.groups ?? []).filter((g) => g?.id).map((g) => ({
     id: String(g.id),
     name: String(g.name ?? g.id),
@@ -190,7 +211,7 @@ export function buildCatalogView(catalog, { priceTable } = {}) {
         id: String(e.id), name: String(e.name ?? e.id), description: String(e.description ?? ''),
       })),
       defaultEffort: m.reasoning?.defaultEffort ? String(m.reasoning.defaultEffort) : null,
-      vision: knownVision(g.id, m.id),
+      vision: knownVision(g.id, m.id, { fromReference }),
       priced: isPriced(g.id, m.id, priceTable),
     })),
   }));
@@ -199,7 +220,7 @@ export function buildCatalogView(catalog, { priceTable } = {}) {
 }
 
 /** 给管理员的提示（控制台与接口共用，保证措辞一致）。 */
-export function selectionNotices({ provider, model, reasoningEffort, vision, priced }) {
+export function selectionNotices({ provider, model, reasoningEffort, vision, priced, visionFromReference } = {}) {
   const notices = [];
   if (!isFirstPartyProvider(provider)) {
     notices.push({ level: 'warn', code: 'third-party', text: `${provider} 不是 DeepSeek 自家的提供方：QQ 里的聊天内容（群友消息、图片、人格卡、记忆）会发给它处理，请先确认它的隐私政策。` });
@@ -207,10 +228,13 @@ export function selectionNotices({ provider, model, reasoningEffort, vision, pri
   if (reasoningEffort === 'off') {
     notices.push({ level: 'warn', code: 'effort-off', text: '思考已关闭：回复更快，但二代仿真里的工具调用、读群判断和人格一致性可能变差。' });
   }
-  if (!canSeeImages({ provider, model, vision })) {
+  if (!canSeeImages({ provider, model, vision, visionFromReference })) {
+    const known = knownVision(provider, model, { fromReference: visionFromReference === true });
     notices.push({ level: 'info', code: 'no-vision', text: normalizeVisionSetting(vision) === 'no'
       ? '已设为不能看图：QQ 里的图片、表情会改成文字占位（例如「[图片1：当前模型不能看图，已省略]」）。'
-      : '这个模型能不能看图未知：按不能看图处理，图片、表情会改成文字占位；确认它能看图的话，把「看图能力」改成「能看图」。' });
+      : known === 'no'
+        ? '这个模型声明了不能看图（迁移自 QQAgent 的判定表）：图片、表情会改成文字占位；判断变了的话把「看图能力」改成「能看图」。'
+        : '这个模型能不能看图未知：按不能看图处理，图片、表情会改成文字占位；确认它能看图的话，把「看图能力」改成「能看图」。' });
   }
   if (!priced) {
     notices.push({ level: 'info', code: 'unpriced', text: '价格表没有覆盖这个模型：令牌与花费页的金额按 DeepSeek-V4.1-Flash 估算，并标「估算」。' });

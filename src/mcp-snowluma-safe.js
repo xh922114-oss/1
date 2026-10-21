@@ -19,6 +19,8 @@ import { z } from 'zod';
 // 在 MCP 里拦会连「安全拒绝理由」都拿不到，反而让模型无法把话说清楚。
 import { SENSITIVE_RE } from './sensitive.js';
 import { serializeModelData } from './qq-model-view.js';
+// 掷骰与检定：从 QQAgent（MIT）`skills/trpg-dice` 迁移，见 docs/guides/QQAGENT_MIGRATION.md
+import { rollDice, cocCheck, dndCheck } from './dice.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -293,7 +295,7 @@ async function legacyReadToolAllowed() {
   return String(status?.mode ?? '') === 'closed-agent';
 }
 
-const server = new McpServer({ name: 'snowluma-safe', version: '1.0.3' });
+const server = new McpServer({ name: 'snowluma-safe', version: '1.1.0' });
 
 // ── 工具开关必须在**注册期**生效，而不是只在校验期 ──────────────────────────
 //
@@ -354,6 +356,9 @@ const TOOL_CONFIG_FLAGS = {
   // 管理员私聊跨群只读 + 群长期规则（默认关闭；下方注册处另有 === true 判断）
   qq_owner_peek_group: 'ownerGroupAccess',
   qq_owner_group_rule: 'ownerGroupAccess',
+  // 迁移自 QQAgent：掷骰与检定（纯本地计算，不联网、不发消息）
+  qq_roll_dice: 'rollDice',
+  qq_check: 'rollDice',
 };
 const disabledTools = [];
 {
@@ -381,6 +386,51 @@ server.tool(
     } catch (error) {
       return { content: [{ type: 'text', text: `查询失败：${error?.message ?? error}` }], isError: true };
     }
+  }
+);
+
+server.tool(
+  'qq_roll_dice',
+  '掷骰子（跑团 / 随机表 / 伤害骰用）。骰点由本机密码学随机数算出，模型不能编造。'
+  + '支持标准表达式："3d6"、"1d100"、"2d20kh1"（掷 2 取高）、"4d6dl1"（掷 4 去低）、"3d8+2"、"5"。'
+  + '需要技能检定/攻击判定/豁免时用 qq_check（它会给成功等级），这个只出原始点数。'
+  + '掷出什么就转述什么，包括失败与大失败。',
+  {
+    formula: z.string().describe('骰点表达式，如 "1d100"、"3d6"、"2d20kh1"、"4d6dl1"、"3d8+2"'),
+    label: z.string().optional().describe('这次掷骰的用途，用于回显，如 "伤害"、"火焰箭"、"随机遭遇表"'),
+    hidden: z.boolean().optional().describe('暗骰：结果不展示给群友，只供你自己参考（如暗中判定 NPC 是否察觉）'),
+    showBreakdown: z.boolean().optional().describe('是否显示每一颗骰子的点数明细，默认显示（方便玩家复核）')
+  },
+  async ({ formula, label, hidden, showBreakdown }) => {
+    const r = rollDice({ formula, label, hidden, showBreakdown: showBreakdown !== false });
+    if (r.error) return { content: [{ type: 'text', text: r.error }], isError: true };
+    return { content: [{ type: 'text', text: r.text }] };
+  }
+);
+
+server.tool(
+  'qq_check',
+  '做一次技能/属性检定并自动判定成败（骰子由本机密码学随机数掷出，结果必须原样转述）。'
+  + '两种系统：COC 7 版（system="coc"，skill=技能值，bonusDice 正数为奖励骰、负数为惩罚骰，'
+  + '返回大成功/极难成功/困难成功/常规成功/失败/大失败）；DND 5e（system="dnd"，modifier=调整值，'
+  + 'dc=难度，advantage/disadvantage 二选一，用 d20，自然 20/1 单独标记）。',
+  {
+    system: z.enum(['coc', 'dnd']).describe('规则系统：coc（7 版，d100）或 dnd（5e，d20）'),
+    skill: z.number().optional().describe('COC 用：技能/属性值，如 60'),
+    skillName: z.string().optional().describe('技能名，用于回显，如 "侦查"、"聆听"、"力量"'),
+    bonusDice: z.number().optional().describe('COC 用：奖励骰数（正数=奖励，负数=惩罚），范围 -2~2'),
+    modifier: z.number().optional().describe('DND 用：判定调整值，如 +5 填 5'),
+    dc: z.number().optional().describe('DND 用：难度等级 DC，不填默认 15'),
+    advantage: z.boolean().optional().describe('DND 用：优势（掷两次 d20 取高），与 disadvantage 互斥'),
+    disadvantage: z.boolean().optional().describe('DND 用：劣势（掷两次 d20 取低）'),
+    reason: z.string().optional().describe('这次检定的情境，用于回显，如 "在书房找暗门"')
+  },
+  async ({ system, skill, skillName, bonusDice, modifier, dc, advantage, disadvantage, reason }) => {
+    const r = system === 'coc'
+      ? cocCheck({ skill, skillName, bonusDice, reason })
+      : dndCheck({ modifier, dc, advantage, disadvantage, skillName, reason });
+    if (r.error) return { content: [{ type: 'text', text: r.error }], isError: true };
+    return { content: [{ type: 'text', text: r.text }] };
   }
 );
 

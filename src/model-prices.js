@@ -14,11 +14,21 @@
 //   计费输入 = inputTokens(未命中) + cacheReadTokens + cacheWriteTokens
 // 所以三个桶要分别计价再相加，不能把 cacheRead 当成 inputTokens 的一部分。
 //
+// 表里有两类行：
+//   · **桥接自己维护的 DeepSeek 行**（下面 `CURATED_MODELS`）：口径最准，峰谷倍率固定 2；
+//   · **从 QQAgent 迁移来的参考行**（`./model-prices-table.js`，140 个模型）：
+//     带 `reference: true` 与 `source`（official / derived），逐模型可带自己的 peakMultiplier
+//     （非 DeepSeek 系基本没有峰谷价，倍率是 1）。第三方渠道的实际单价通常与官方不同，
+//     所以这类行算出来的金额一律带 `reference`，控制台按「官方参考价」提示。
+//
 // 价目来源：https://api-docs.deepseek.com/zh-cn/quick_start/pricing/
+// 迁移来源：QQAgent（MIT）`src/model-prices.js`，核对时间 2026-09-03；见 docs/guides/QQAGENT_MIGRATION.md
 // 节假日来源：国办发明电〔2025〕7 号（2026 年部分节假日安排）。
 
+import { MIGRATED_MODELS } from './model-prices-table.js';
+
 /** 价目表版本标记，仅用于控制台展示与排障（改了价目表就改这里）。 */
-export const PRICE_TABLE_VERSION = '2026-11-04';
+export const PRICE_TABLE_VERSION = '2026-11-04+qqagent-2026-09-03';
 
 /**
  * 2026 年中国法定节假日（放假日，含调休连休段）。
@@ -78,9 +88,39 @@ export const CN_HOLIDAYS = [...CN_HOLIDAYS_2026, ...CN_HOLIDAYS_2027];
 const BEIJING_OFFSET_MINUTES = 8 * 60;
 
 /**
+ * 桥接自己维护的 DeepSeek 行（口径以这里为准，覆盖同名迁移行）。
+ * `peakMultiplier` 不写 = 用表级的 peakMultiplier（2）。
+ */
+const CURATED_MODELS = {
+  'deepseek-flash': {
+    label: 'DeepSeek-V4.1-Flash',
+    off: { cacheHit: 0.02, cacheMiss: 1, cacheWrite: 1, output: 4 }
+  },
+  'deepseek-v4-flash': {
+    label: 'DeepSeek-V4.1-Flash（旧模型名）',
+    off: { cacheHit: 0.02, cacheMiss: 1, cacheWrite: 1, output: 4 }
+  },
+  'deepseek-v4-flash-vision-exp': {
+    label: 'DeepSeek-V4.1-Flash（视觉实验名）',
+    off: { cacheHit: 0.02, cacheMiss: 1, cacheWrite: 1, output: 4 }
+  },
+  'deepseek-v4-pro': {
+    label: 'DeepSeek-V4-Pro-0813',
+    off: { cacheHit: 0.15, cacheMiss: 4.5, cacheWrite: 4.5, output: 13.5 }
+  },
+  'deepseek-pro': {
+    label: 'DeepSeek-V4-Pro-0813（旧模型名）',
+    off: { cacheHit: 0.15, cacheMiss: 4.5, cacheWrite: 4.5, output: 13.5 }
+  }
+};
+
+/**
  * 默认价目表（元 / 百万 token）。
  * `off` 为空闲时段单价；高峰时段单价 = 空闲单价 × `peakMultiplier`。
  * `cacheWrite` 缺省时按未命中价计费（DeepSeek 目前不单独报 cacheWrite，恒为 0）。
+ * `peakMultiplier` 可以逐模型写（迁移来的第三方模型多为 1，即该厂商没有峰谷价）；
+ * 不写就用表级的 2。
+ * `reference: true` = 厂商官方参考价（迁移行），不是本机渠道实测价。
  */
 export const DEFAULT_PRICE_TABLE = {
   version: PRICE_TABLE_VERSION,
@@ -93,28 +133,8 @@ export const DEFAULT_PRICE_TABLE = {
   // 高峰时段只在周一至周五；1=周一 … 7=周日
   peakWeekdays: [1, 2, 3, 4, 5],
   holidays: CN_HOLIDAYS,
-  models: {
-    'deepseek-flash': {
-      label: 'DeepSeek-V4.1-Flash',
-      off: { cacheHit: 0.02, cacheMiss: 1, cacheWrite: 1, output: 4 }
-    },
-    'deepseek-v4-flash': {
-      label: 'DeepSeek-V4.1-Flash（旧模型名）',
-      off: { cacheHit: 0.02, cacheMiss: 1, cacheWrite: 1, output: 4 }
-    },
-    'deepseek-v4-flash-vision-exp': {
-      label: 'DeepSeek-V4.1-Flash（视觉实验名）',
-      off: { cacheHit: 0.02, cacheMiss: 1, cacheWrite: 1, output: 4 }
-    },
-    'deepseek-v4-pro': {
-      label: 'DeepSeek-V4-Pro-0813',
-      off: { cacheHit: 0.15, cacheMiss: 4.5, cacheWrite: 4.5, output: 13.5 }
-    },
-    'deepseek-pro': {
-      label: 'DeepSeek-V4-Pro-0813（旧模型名）',
-      off: { cacheHit: 0.15, cacheMiss: 4.5, cacheWrite: 4.5, output: 13.5 }
-    }
-  },
+  // 迁移来的 140 个模型铺底，桥接自己维护的 DeepSeek 行覆盖同名项（顺序不能反）
+  models: { ...MIGRATED_MODELS, ...CURATED_MODELS },
   // 未知模型的兜底价：按 flash 计，并在返回值里标 estimated=true，控制台会提示。
   fallbackModel: 'deepseek-flash'
 };
@@ -141,7 +161,23 @@ export function resolvePriceTable(override) {
       // 只有用户/内置条目**自己**没写 cacheWrite 时才跟随 cacheMiss；
       // 否则会从兜底模型继承一个不相干的 cacheWrite 价（静默算错钱）。
       if (!Number.isFinite(Number(given.cacheWrite))) off.cacheWrite = off.cacheMiss;
-      merged.models[name] = { label: entry.label ?? base?.label ?? name, off };
+      // 峰谷倍率可以逐模型覆盖；不写就继承内置行（迁移行多是 1，DeepSeek 行是 2）。
+      const peakMultiplier = Number.isFinite(Number(entry.peakMultiplier))
+        ? Number(entry.peakMultiplier)
+        : (Number.isFinite(Number(base?.peakMultiplier)) ? Number(base.peakMultiplier) : undefined);
+      // 「官方参考价」的标记：用户自己填了单价，那就是他的实测价，不再是参考价；
+      // 只改 label、或者显式写了 reference，则按他写的来，否则继承内置行。
+      const wroteOwnOff = Object.keys(given).length > 0;
+      const reference = entry.reference === true
+        ? true
+        : (wroteOwnOff ? false : base?.reference === true);
+      merged.models[name] = {
+        label: entry.label ?? base?.label ?? name,
+        off,
+        ...(peakMultiplier === undefined ? {} : { peakMultiplier }),
+        ...(reference ? { reference: true } : {}),
+        ...(entry.source ?? base?.source ? { source: entry.source ?? base?.source } : {})
+      };
     }
   }
   if (typeof merged.fallbackModel !== 'string' || !merged.models[merged.fallbackModel]) {
@@ -185,7 +221,10 @@ export function ratesAt(model, atMs, table = DEFAULT_PRICE_TABLE) {
   const chosen = entry ?? table.models[table.fallbackModel];
   const off = chosen.off;
   const peak = isPeakAt(atMs, table);
-  const factor = peak ? table.peakMultiplier : 1;
+  // 峰谷倍率优先用模型自己的（迁移来的第三方模型多为 1：该厂商没有峰谷价），
+  // 没写才用表级的 2 —— DeepSeek 系因此行为不变。
+  const multiplier = Number.isFinite(Number(chosen.peakMultiplier)) ? Number(chosen.peakMultiplier) : table.peakMultiplier;
+  const factor = peak ? multiplier : 1;
   return {
     model: key || table.fallbackModel,
     label: chosen.label,
@@ -194,7 +233,12 @@ export function ratesAt(model, atMs, table = DEFAULT_PRICE_TABLE) {
     currency: table.currency,
     symbol: table.symbol,
     unit: table.unit,
+    // 兜底价估算（模型根本不在表里）
     estimated: !entry,
+    // 厂商官方参考价（迁移行）：金额方向对，但第三方渠道实际单价可能不同
+    reference: chosen.reference === true,
+    source: chosen.source ?? null,
+    peakMultiplier: multiplier,
     cacheHit: off.cacheHit * factor,
     cacheMiss: off.cacheMiss * factor,
     cacheWrite: (Number.isFinite(off.cacheWrite) ? off.cacheWrite : off.cacheMiss) * factor,

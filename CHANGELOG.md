@@ -3,6 +3,57 @@
 本仓库（qq-bridge-enhanced）基于上游 [Derpyu520/qq-bridge](https://github.com/Derpyu520/qq-bridge) `v0.2.0-r3`。
 上游更早的版本历史见 [docs/guides/DSH_020_ADAPTATION.md](docs/guides/DSH_020_ADAPTATION.md) 与上游 Release 页面。
 
+## v1.1.0 —— 2026-10-21
+
+**从 QQAgent 迁移**：模型价目表（140 个模型）、看图判定表、可复核的掷骰工具、跑团主持人人格卡；
+其余插件与 skill 逐条给出舍弃理由（**不引入任何新的本地工具或网络出口**）。
+详细判定见 [docs/guides/QQAGENT_MIGRATION.md](docs/guides/QQAGENT_MIGRATION.md)，
+发布说明：[docs/release/RELEASE_NOTES_v1.1.0.md](docs/release/RELEASE_NOTES_v1.1.0.md)。
+
+### 新增：模型价目表（迁移自 QQAgent）
+- `src/model-prices-table.js`（生成文件，140 个模型）+ `src/model-prices.js` 合并：
+  迁移行铺底，本仓库自己维护的 5 条 DeepSeek 行覆盖同名项，口径不变。
+- **逐模型峰谷倍率**：`ratesAt()` 现在优先用模型自己的 `peakMultiplier`（迁移来的第三方模型多为 1，
+  即该厂商没有峰谷价），没写才用表级的 2 —— DeepSeek 系行为因此完全不变。
+- 迁移行一律 `reference: true`（厂商**官方参考价**，不是本机渠道实测价）与 `source`（official / derived）；
+  账本把这部分金额标成参考价，控制台「当前生效的价目表」会显示逐模型倍率与来源标记。
+- `config.json` 的 `pricing.models` 覆盖项仍然优先；用户自己填了单价的行不再算参考价。
+
+### 新增：看图判定表（迁移自 QQAgent，默认关）
+- `src/model-vision-table.js`（生成文件：54 条模型级 + 21 条渠道级判定）。
+- `knownVision()` 现在返回三态（`yes` / `no` / `unknown`），并支持 `{ fromReference: true }`；
+  `canSeeImages()` / `buildCatalogView()` / `selectionNotices()` 同步支持，措辞区分「声明了不能看图」与「未知」。
+- **默认不生效**：模型级判定是跨渠道的，命名相同 ≠ 端点相同（本仓库原有的安全性质），
+  要开 `config.json` → `dsh.visionFromReference: true` 才参与；控制台「看图能力」手动开关永远优先。
+
+### 新增：掷骰与检定工具 `qq_roll_dice` / `qq_check`（迁移自 QQAgent）
+- `src/dice.js`：骰点表达式（`3d6+2` / `2d20kh1` / `4d6dl1`）、COC 7 版检定（奖励骰·惩罚骰·
+  六级成功等级·大失败口径·`fumbleFree`）、DND 5e 检定（优势·劣势·DC·自然 20/1）、暗骰；
+  算法与输出文案从 QQAgent `skills/trpg-dice` 原样移植，随机数仍走 `crypto.randomInt`（模型编不了数字）。
+- 两个 MCP 工具在 `src/mcp-snowluma-safe.js`，开关 `socialV2.tools.rollDice`（**默认开**，
+  纯本地计算、不联网不发消息）；控制台面板加了对应开关，`config.example.json` 同步。
+- 与 QQAgent 的两处差别（文件头注明）：`chatKeys` 没有迁（本仓库用白名单群 + 工具开关管）；
+  随机源可注入，因此离线测试能给出确定的点数。
+
+### 新增：跑团主持人人格卡 `roles/守秘人.md`
+- 迁移自 QQAgent `personas/trpg-gm.md`，按 `roles/README.md` 规范重写：
+  删掉工具调用语法与分条机制，从 17.9 KB 压到 **4788 字符**（默认注入上限 6000）。
+- 保留掷骰铁律、NPC 每回合必须自己行动、群聊跑团「等所有玩家表态再一次性结算」、
+  COC 六级成功的叙事信息量、DND DC 参考、「是，而且……」「失败前进」、不替玩家做决定、
+  公平、开场收尾与边界。
+
+### 测试
+- 新增 `scripts/test-dice.mjs`（5 组断言，已进 `test:audit`）；
+  `test-dsh-model.mjs` 补看图判定开关的 7 条断言；
+  `test-role-card.mjs` 补「roles/ 下每张人格卡都能解析且不超注入上限」；
+  `test-qq-model-view.mjs` 的夹具补 `dice.js`（新依赖）。
+
+### 升级注意（从 v1.0.3）
+- 沿用 `config.json`、`state/`；执行 `npm ci` 并重启桥接。**工具开关在注册期读取，所以要让
+  `qq_roll_dice` / `qq_check` 出现在模型工具表里，需要重启 DSH**（控制台面板已注明）。
+- 版本号从 1.0.3 升到 1.1.0（新增能力，语义化次版本）；价目表版本标记变为
+  `2026-11-04+qqagent-2026-09-03`（桥接口径 + 迁移表核对时间）。
+
 ## v1.0.3 —— 2026-10-21
 
 在 v1.0.2 的基础上的修复版本：**切换 agent 等级不再失忆**；引用一条（较早的）合并转发时，AI 能看到并打开里面的内容，这条消息也不再卡 30 秒；普通图片不再被误当成表情。

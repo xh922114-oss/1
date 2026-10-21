@@ -2,7 +2,7 @@
 
 > 根目录只留 `README.md` / `README.en.md` / `RULES.md`，以及 v0.3.0 起的发布类文档 `CHANGELOG.md` / `NOTICE.md`；其余全部在本目录下。
 >
-> **v0.3.0 增强版新增**：[DSH_DEPLOYMENT.md](DSH_DEPLOYMENT.md)（给部署 agent 的完整部署说明）· [guides/CONTINUITY.md](guides/CONTINUITY.md) · [guides/ADMIN_CHANNEL.md](guides/ADMIN_CHANNEL.md) · [guides/CONFIGURATION.md](guides/CONFIGURATION.md) · [guides/TESTING.md](guides/TESTING.md) · [release/RELEASE_NOTES_v0.3.0.md](release/RELEASE_NOTES_v0.3.0.md) · [release/PUBLISHING.md](release/PUBLISHING.md) · **v0.4.0**：[guides/CONTROL_CENTER.md](guides/CONTROL_CENTER.md) · [release/RELEASE_NOTES_v0.4.0.md](release/RELEASE_NOTES_v0.4.0.md) · **v1.0.0**：[release/RELEASE_NOTES_v1.0.0.md](release/RELEASE_NOTES_v1.0.0.md)（Windows + macOS、接口平台、NapCat） · **v1.0.1**：[release/RELEASE_NOTES_v1.0.1.md](release/RELEASE_NOTES_v1.0.1.md)（新增 Linux、SnowLuma 2.x）· **v1.0.2**：[release/RELEASE_NOTES_v1.0.2.md](release/RELEASE_NOTES_v1.0.2.md)（换 SnowLuma 目录前提醒迁移） · [release/RELEASE_NOTES_v1.0.3.md](release/RELEASE_NOTES_v1.0.3.md)（引用合并转发修复）
+> **v0.3.0 增强版新增**：[DSH_DEPLOYMENT.md](DSH_DEPLOYMENT.md)（给部署 agent 的完整部署说明）· [guides/CONTINUITY.md](guides/CONTINUITY.md) · [guides/ADMIN_CHANNEL.md](guides/ADMIN_CHANNEL.md) · [guides/CONFIGURATION.md](guides/CONFIGURATION.md) · [guides/TESTING.md](guides/TESTING.md) · [release/RELEASE_NOTES_v0.3.0.md](release/RELEASE_NOTES_v0.3.0.md) · [release/PUBLISHING.md](release/PUBLISHING.md) · **v0.4.0**：[guides/CONTROL_CENTER.md](guides/CONTROL_CENTER.md) · [release/RELEASE_NOTES_v0.4.0.md](release/RELEASE_NOTES_v0.4.0.md) · **v1.0.0**：[release/RELEASE_NOTES_v1.0.0.md](release/RELEASE_NOTES_v1.0.0.md)（Windows + macOS、接口平台、NapCat） · **v1.0.1**：[release/RELEASE_NOTES_v1.0.1.md](release/RELEASE_NOTES_v1.0.1.md)（新增 Linux、SnowLuma 2.x）· **v1.0.2**：[release/RELEASE_NOTES_v1.0.2.md](release/RELEASE_NOTES_v1.0.2.md)（换 SnowLuma 目录前提醒迁移） · [release/RELEASE_NOTES_v1.0.3.md](release/RELEASE_NOTES_v1.0.3.md)（引用合并转发修复） · **v1.1.0**：[release/RELEASE_NOTES_v1.1.0.md](release/RELEASE_NOTES_v1.1.0.md)（从 QQAgent 迁移：模型价目表 / 看图判定 / 掷骰工具 / 守秘人人格卡）
 > 仓库目录结构与 `scripts/` 命名约定见 **[FOLDER_MAP.md](FOLDER_MAP.md)**。
 >
 > **状态标记**：✅ 仍然有效（按它做就对） · ⚠️ 部分过时（见备注） · 🗄️ 已被取代（保留作背景）
@@ -18,6 +18,7 @@
 | [guides/CONTINUITY.md](guides/CONTINUITY.md) | v0.3.0 人际连续性：QQ 号认人、人物库结构、共享策略与可见性、入群事件、跨群协作、迁移、存储可靠性 | ✅ |
 | [guides/ADMIN_CHANNEL.md](guides/ADMIN_CHANNEL.md) | v0.3.0 owner 管理通道：权限分级、DSH rc.2 核实事实、命令、确认流程、TOTP 威胁边界、审批、自动回落、外部变更检测、审计 | ✅ 改动权限相关代码前必读 |
 | [guides/CONFIGURATION.md](guides/CONFIGURATION.md) | v0.3.0 新增配置字段与状态文件 | ✅ |
+| [guides/QQAGENT_MIGRATION.md](guides/QQAGENT_MIGRATION.md) | **从 QQAgent 迁移的逐项判定**：迁了什么（模型价目表 / 看图判定 / 掷骰工具 / 守秘人人格卡）、每一个插件与 skill 为什么舍弃、还想迁的四件事怎么落点 | ✅ 2026-10-21 新增 |
 | [guides/TESTING.md](guides/TESTING.md) | 离线回归清单与需要部署后验证的事项 | ✅ |
 | [guides/DSH_SETUP.md](guides/DSH_SETUP.md) | DSH 端安装说明：`qq-chat` / `qq-chat-v2` preset 与三个 MCP server 怎么挂到目标设备的 DSH 上 | ✅ |
 | [guides/VOICE.md](guides/VOICE.md) | 语音发送全解：独立工具（`voice-tool/` 的图形界面与命令行）、桥接 CLI、AI 工具、控制台面板，以及**工具拆出后的配置解析顺序** | ✅ 2026 整理时已更新（工具移到上一级 `voice-tool/`） |

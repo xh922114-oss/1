@@ -12,6 +12,26 @@ Copyright (c) 2026 Derpyu520 and qq-bridge / QSH contributors）的二次开发�
   完整变更清单见 [CHANGELOG.md](CHANGELOG.md) 与 [docs/release/RELEASE_NOTES_v0.3.0.md](docs/release/RELEASE_NOTES_v0.3.0.md)。
 - 本项目与上游作者、DeepSeek、SnowLuma 项目及腾讯公司均无隶属关系。
 
+## 从 QQAgent 迁移的内容（MIT）
+
+v1.1.0 起，本仓库包含从 [Kondius 的 QQAgent](https://github.com/K0nd1us/QQ-agent)（MIT 许可，
+Copyright (c) Kondius）**迁移**过来的少量数据与算法，逐项判定见
+[docs/guides/QQAGENT_MIGRATION.md](docs/guides/QQAGENT_MIGRATION.md)：
+
+| 迁移物 | 文件 | 迁自 |
+| --- | --- | --- |
+| 模型官方价目表（140 个模型，元 / 百万 token）与逐模型峰谷倍率 | `src/model-prices-table.js` | QQAgent `src/model-prices.js` 的 `OFFICIAL_PRICES`（核对时间 2026-09-03） |
+| 「能不能看图」判定表（54 个模型级 + 21 个渠道级） | `src/model-vision-table.js` | QQAgent `src/model-vision-docs.js` 的 `MODEL_DOCS` / `PROVIDER_DOCS` |
+| 掷骰与检定算法、输出文案 | `src/dice.js` | QQAgent `skills/trpg-dice/index.js` |
+| 跑团主持人人格卡（按本仓库人格卡规范重写并压缩） | `roles/守秘人.md` | QQAgent `personas/trpg-gm.md` |
+
+- 迁移内容仍以 MIT 授权；两个生成文件（`src/model-prices-table.js`、`src/model-vision-table.js`）的文件头
+  写明了来源、转换口径与可信度标记，改动它们请连同出处一起改。
+- QQAgent 与本项目没有隶属关系；上游的 `LICENSE` 与版权声明在各自仓库，本仓库不复制其代码本体，
+  只做上述数据与算法的移植（并在文件头标注出处）。
+- ⚠️ 迁移过来的价目表是**厂商官方参考价**（`reference: true`），不是本机渠道的实测价：
+  走中转站/网关时实际单价通常与官方不同，账本会把这类金额标成参考价。
+
 ## 第三方组件（不随本项目分发，适用各自许可）
 
 上游 [LICENSE](LICENSE) 后半部分「第三方组件与合规边界」一节仍然有效，以下为 v0.3.0 开发时重新核对的要点：

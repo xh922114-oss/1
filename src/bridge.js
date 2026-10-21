@@ -821,7 +821,8 @@ function loadConfig() {
         requestMode: true,
         crossGroup: true,
         ownerRelay: false,
-        ownerGroupAccess: false   // 管理员私聊只读查看白名单群 + 给群设长期规则（默认关闭）
+        ownerGroupAccess: false,  // 管理员私聊只读查看白名单群 + 给群设长期规则（默认关闭）
+        rollDice: true            // 掷骰与检定（迁移自 QQAgent；纯本地计算，不联网不发消息）
       },
       wake: {
         defaultMode: 'diving',
@@ -957,6 +958,8 @@ function loadConfig() {
     ownerRelay: false,
     // 管理员私聊只读查看白名单群 + 给群设长期规则（默认关闭）
     ownerGroupAccess: false,
+    // 掷骰与检定（迁移自 QQAgent）：纯本地计算，不联网、不发消息、不读本地文件
+    rollDice: true,
     ...(cfg.socialV2.tools ?? {})
   };
 
@@ -4559,7 +4562,7 @@ async function main() {
           let view = { providers: [], failures: [] };
           let catalogError = null;
           if (got.ok) {
-            view = buildCatalogView(got.catalog, { priceTable });
+            view = buildCatalogView(got.catalog, { priceTable, fromReference: cfg.dsh?.visionFromReference === true });
             const { entry } = findCatalogModel(got.catalog, provider, model);
             if (entry) {
               options = catalogEfforts(entry);
@@ -4584,11 +4587,11 @@ async function main() {
             model,
             reasoningEffort,
             vision,
-            visionKnown: knownVision(provider, model),
+            visionKnown: knownVision(provider, model, { fromReference: cfg.dsh?.visionFromReference === true }),
             canSeeImages: modelCanSeeImages(),
             thirdParty: !isFirstPartyProvider(provider),
             priced,
-            notices: selectionNotices({ provider, model, reasoningEffort, vision, priced }),
+            notices: selectionNotices({ provider, model, reasoningEffort, vision, priced, visionFromReference: cfg.dsh?.visionFromReference === true }),
             options,
             labels,
             default: REASONING_EFFORT_DEFAULT,

@@ -97,6 +97,16 @@ test('③ 目录缓存、看图能力、提示与图片降级', async () => {
   assert.equal(canSeeImages({ provider: 'example-cloud', model: 'example-chat', vision: 'yes' }), true, '管理员可手动指定');
   assert.equal(canSeeImages({ provider: 'deepseek-official', model: 'deepseek-flash', vision: 'no' }), false);
 
+  // 迁移自 QQAgent 的判定表（src/model-vision-table.js）：
+  // 默认不生效（命名相同 ≠ 端点相同），只有显式打开 dsh.visionFromReference 才参与判定。
+  assert.equal(knownVision('example-cloud', 'deepseek-v4-flash'), 'unknown', '模型级判定默认不参与');
+  assert.equal(knownVision('example-cloud', 'deepseek-v4-flash', { fromReference: true }), 'yes', '打开后按迁移表判为能看图');
+  assert.equal(knownVision('example-cloud', 'deepseek-v4-pro', { fromReference: true }), 'no', '迁移表里明确不能看图的也要给 no');
+  assert.equal(knownVision('example-cloud', 'some-unknown-model', { fromReference: true }), 'unknown', '表里没有的仍是未知');
+  assert.equal(canSeeImages({ provider: 'example-cloud', model: 'deepseek-v4-flash' }), false, '默认下迁移表不改变行为');
+  assert.equal(canSeeImages({ provider: 'example-cloud', model: 'deepseek-v4-flash', visionFromReference: true }), true, '打开开关后按迁移表给图');
+  assert.equal(canSeeImages({ provider: 'example-cloud', model: 'deepseek-v4-flash', visionFromReference: true, vision: 'no' }), false, '手动指定永远优先');
+
   assert.equal(isFirstPartyProvider('deepseek-official') && isFirstPartyProvider('deepseek-account'), true);
   assert.equal(isFirstPartyProvider('example-cloud'), false);
   assert.equal(isPriced('deepseek-official', 'deepseek-flash', DEFAULT_PRICE_TABLE), true);
