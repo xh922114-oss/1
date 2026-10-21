@@ -96,6 +96,8 @@ import {
 import { buildStyleHint, createStyleCache, toStyleRows, STYLE_DEFAULTS } from './social/group-style.js';
 // 入站语音转文字（迁移自 QQAgent 的 speech-to-text-qq，合并组 G8）
 import { fetchPttText, recordLabel, DEFAULT_PTT_TIMEOUT_MS } from './voice-transcribe.js';
+// 记忆分流（私聊 → fish-memory / 群聊 → mnemon）
+import { memoryRoutingLine, memoryStoreFor, normalizeMemoryRouting, enableFishMemorySession } from './memory-routing.js';
 // v0.3.0：人际连续性（人物库/入群事件/跨群协作）与 owner 管理通道（模式切换/权限分级/审批增强）。
 // 业务规则全部在 src/social/* 与 src/admin/*，这里只接线。
 import { createBridgeExtensions, redactCredentials, normalizeMemberNotice, processMemberEvent, joinWakeInstruction, checkCrossGroup, queryPresence, queryActivity, resolveLevelPlan, permissionCommandSucceeded, L0_MODES, LEVEL_TEXT, parseOwnerCommandForGuard, createReconnectWatchdog, describeAgentError, agentErrorUserText, isConfigError, resolveDshBaseUrl, ownerRelayConfig, validateOwnerRelay, createOwnerRelayLimiter, createOwnerRelayStore, ownerRelayPromptBlock, ownerRelayResultText, ownerRelayNoticeText, GROUP_RULE_LIMITS, validateOwnerGroupAccess, normalizeRules, addRule, removeRule, rulesPromptBlock, peekView, groupRuleResultText, groupRuleNoticeText, isNapCatVersionInfo, looksLikePathOnlyError, stickerTempBase, writeTempSticker, findFavByMd5, napcatAddOk, qqBackendFromVersionInfo, qqBackendLabel, createDshHealth } from './bridge-extensions.js';
@@ -986,6 +988,11 @@ function loadConfig() {
     maxPerHour: 10,
     ...(cfg.socialV2?.imageSend ?? {})
   };
+
+  // memoryRouting：记忆该写哪个库（私聊 → fish-memory / 群聊 → mnemon）。
+  // 只影响两件事：给指定私聊在 fish-memory 里开记忆档、每轮唤醒提示词里加一行「记忆归属」。
+  // 不影响本仓库自己的 qq_memory_*（那是会话短期记忆，每轮注入，便宜）。
+  cfg.memoryRouting = normalizeMemoryRouting(cfg.memoryRouting);
 
   // socialV2.voice：语音发送（把准备好的音频文件当 QQ 语音发出去）。
   // dir 为相对仓库根目录的语音库路径；AI 的 qq_send_voice 默认只能从这个目录取文件，
@@ -9088,7 +9095,22 @@ async function main() {
     return 'failed';
   }
 
+  // 记忆分流：配置里列出的私聊，其 DSH 会话要在 fish-memory 里单独打开记忆档
+  // （fish-memory 只认会话 id，默认全关）。包一层而不是改内部：ensureSession 有多个返回点，
+  // 包一层保证不漏；同一个 sid 只写一次配置文件。
+  const fishMemoryOpened = new Set();
   async function ensureSession(key) {
+    const sid = await ensureSessionInner(key);
+    if (sid && memoryStoreFor(key, cfg.memoryRouting) === 'fish' && !fishMemoryOpened.has(String(sid))) {
+      const r = enableFishMemorySession(sid);
+      if (r.changed) log(`[memory] fish-memory 已为 ${key} 打开记忆档（${r.path}）`);
+      else if (r.reason) log(`[memory] fish-memory 打开记忆档失败（${key}）：${r.reason}`);
+      if (r.changed || !r.reason) fishMemoryOpened.add(String(sid));
+    }
+    return sid;
+  }
+
+  async function ensureSessionInner(key) {
     const epoch = sessionEpoch;
     const policy = sessionPolicy(key);
     if (!isSessionAllowedInCurrentMode(key)) throw new Error(`当前模式不允许会话 ${key}`);
@@ -11408,6 +11430,10 @@ async function main() {
     const tokenLine = `【会话令牌】${st.agentToken}（调用二代状态工具时请在参数中带上此令牌）\n\n`;
     const memoryText = formatMemoryV2(st);
     const memoryLine = memoryText ? `${memoryText}\n\n` : '';
+    // 记忆归属（迁移：私聊→fish-memory / 群聊→mnemon）：每轮一行，明确告诉模型写哪个库。
+    // 不归这两个库的会话（例如别的私聊）返回空串，一个字都不加。
+    const memoryRouteText = memoryRoutingLine(key, cfg.memoryRouting);
+    const memoryRouteLine = memoryRouteText ? `${memoryRouteText}\n\n` : '';
     // v0.3.0 在场人物：只注入本轮未读/最近消息里出现的人，并在注入时按共享策略过滤可见范围。
     const presentIds = [...(st.unread || []), ...(st.recentMessages || []).slice(-6)].filter((m) => m && !m.isSelf).map((m) => m.userId).filter(Boolean);
     const peopleText = ext.peopleBlockFor(key, presentIds);
@@ -11452,7 +11478,7 @@ async function main() {
     const identityLine = selfIdentityTextV2();
     const initialPromptText = reason === 'bootstrap' ? formatInitialPromptV2(key) : '';
     const initialPromptLine = initialPromptText ? `${initialPromptText}\n\n` : '';
-    const base = roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + peopleLine + participationLine + preSleepLine;
+    const base = roleLine + identityLine + tokenLine + initialPromptLine + antiAiLine + proactiveLine + stickerLine + replyLine + statusLine + wakeLine + memoryLine + memoryRouteLine + peopleLine + participationLine + preSleepLine;
     if (reason === 'bootstrap') {
       return `${base}【引导唤醒】你已接入 QQ 会话 ${key}。\n当前是二代仿真模式：你的文本输出不会自动发送到 QQ，所有发言必须通过工具完成。\n请先调用 qq_get_prompt 查看角色、推荐值、可用工具和状态；有待回应的消息先按首回复节奏处理，最后才用 qq_set_wake_config 设置你希望如何被唤醒。`;
     }

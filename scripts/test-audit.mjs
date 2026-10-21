@@ -30,6 +30,9 @@ const tests = [
   // 发网图（迁移自 QQAgent 的五个配图扩展，合并组 G2）：只认 http/https、桥接自己抓图、
   // 抓不到/不是图片给人话、按会话限频、以及路由与工具确实接线。
   'test-image-send.mjs',
+  // 记忆分流（私聊 → fish-memory / 群聊 → mnemon）：归一化、store 判定、提示词行、
+  // fish-memory 配置写入（幂等/保留/坏文件）、工具闸门、以及桥接接线。
+  'test-memory-routing.mjs',
   // 体检修复回归：无令牌智能体调用面、send-burst 失败回滚、唤醒限频重试、
   // 定时器类暂存唤醒补发、collector 生命周期、ownerQQ 覆盖语义、预设名校验、
   // wake triggers 白名单、memory-update 边界、wait 租约归一化、md/黑话/表情/账本；

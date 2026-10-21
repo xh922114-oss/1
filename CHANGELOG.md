@@ -3,6 +3,51 @@
 本仓库（qq-bridge-enhanced）基于上游 [Derpyu520/qq-bridge](https://github.com/Derpyu520/qq-bridge) `v0.2.0-r3`。
 上游更早的版本历史见 [docs/guides/DSH_020_ADAPTATION.md](docs/guides/DSH_020_ADAPTATION.md) 与上游 Release 页面。
 
+## v1.3.0 —— 2026-10-21
+
+**人设迁移 + 记忆分流**：QQAgent 的人设落成 `roles/*.md`（5 张，含守秘人原版）；
+私聊 `2456904811` 的长期记忆进 **dsh-fish-memory**，群聊记忆进 **dsh-mnemon**。
+判定与实现细节见 [docs/guides/QQAGENT_MIGRATION.md](docs/guides/QQAGENT_MIGRATION.md)（三·补、三·补2），
+发布说明：[docs/release/RELEASE_NOTES_v1.3.0.md](docs/release/RELEASE_NOTES_v1.3.0.md)。
+
+### 人设（`roles/`）
+- 新增 `roles/小鲸鱼-默认人设.md`（2667）、`roles/小鲸鱼-群友版.md`（6259）、
+  `roles/小鲸鱼-私人版.md`（13973）、`roles/八奈见杏菜.md`（8988）、`roles/守秘人-原版.md`（8398，含本群规则）。
+- **工具名已映射**到本仓库真实工具（`send_message→qq_send_message`、`memory_*→qq_memory_*`、
+  `trpg-dice__*→qq_roll_dice/qq_check`、`web_*→mcp__web-search-safe__*` 等），正文其余内容未改。
+- **未迁移**：`小鲸鱼涩涩版`（`customPersonas[2]` 与 `personaByChat["group:1073022225"]` 同内容，
+  露骨性描写，不代为生成）—— 需要的话在原 `config.json` 里取原文，控制台新建一张贴进去即可。
+- 超过 6000 的卡需要把 `role.maxInjectChars` 调大（表里有每张的要求）；`test-role-card` 的断言
+  从"≤6000"改成"能解析且 ≤20000"，并把超默认值的卡列出来。
+
+### 记忆分流
+- 新增 `src/memory-routing.js`：配置归一化、`memoryStoreFor()`、`memoryRoutingLine()`、
+  `enableFishMemorySession()`（读-改-写 fish-memory 配置，幂等/保留/坏文件降级）。
+- `src/bridge.js`：`ensureSession()` 包一层 —— 配置里的私聊会话在拿到 session id 后把它的
+  fish-memory 记忆档打开（同一个 sid 只写一次）；`buildWakePromptV2Core()` 在记忆段之后插入一行
+  「记忆归属」（群 → mnemon + 空间名，私聊 → fish-memory，其它会话不加）。
+- `plugins/qq-agent-presets/qq-tool-restrict.mjs`：新增 `SAFE_MEMORY_TOOLS` 并放行
+  `remember` / `mnemon_memory_bodies` / `mnemon_memory_body_create` / `mnemon_remember` / `mnemon_recall`；
+  删除与管理面（`mnemon_forget` / `mnemon_document_manage` / `mnemon_view_action` /
+  `mnemon_memory_body_update|merge` / `mnemon_link`）继续拒绝。
+- 新配置 `memoryRouting`（`enabled` / `fishChats` / `mnemonScope` / `mnemonSpace` / `mnemonSpaceId`），
+  `config.example.json` 已同步。
+- 新测试 `scripts/test-memory-routing.mjs`（6 组断言，已进 `test:audit`）；
+  `test-audit-bridge` 的夹具补注入 `memory-routing.js`，并把 `DSH_HOME` 指到临时目录，
+  防止测试写用户真实的 `fish-memory-config.json`。
+
+### 环境侧（不在仓库内）
+- `dsh-fish-memory@1.1.9` 已装进 desktop profile（`vendor/` tarball + `dependencies` + `bundles`），
+  原 `package.json`/`pnpm-lock.yaml`/`cordis.patch.yml` 备份在 `D:\deepseek\_migrate\profile-backup\`。
+- mnemon 的「QQ 群聊记忆」空间**没有自动建成**：本会话的 Mnemon 视图没有写授权，
+  `mnemon_memory_body_create` 被 Host 拒绝。群里第一次写入时模型会自己建（已放行该工具），
+  或你在 Mnemon 界面手动建一个再把 id 填进 `memoryRouting.mnemonSpaceId`。
+
+### 升级注意（从 v1.2.0）
+- 执行 `npm ci` 并**重启 DSH**（新插件要加载，工具清单在注册期读取），再重启桥接。
+- 人设卡是文件，`/role <名字>` 立即生效；超过 6000 的先调 `role.maxInjectChars`。
+- 不想要记忆分流：`memoryRouting.enabled: false`（会把已开的 fish-memory 记忆档留在原处，不会删）。
+
 ## v1.2.0 —— 2026-10-21
 
 **插件也迁了，功能相同的合并**：18 个 QQAgent 插件归成 **11 个合并组**，其中三组落了代码 ——

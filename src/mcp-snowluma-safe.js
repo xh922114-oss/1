@@ -295,7 +295,7 @@ async function legacyReadToolAllowed() {
   return String(status?.mode ?? '') === 'closed-agent';
 }
 
-const server = new McpServer({ name: 'snowluma-safe', version: '1.2.0' });
+const server = new McpServer({ name: 'snowluma-safe', version: '1.3.0' });
 
 // ── 工具开关必须在**注册期**生效，而不是只在校验期 ──────────────────────────
 //

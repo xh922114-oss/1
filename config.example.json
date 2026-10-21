@@ -13,6 +13,15 @@
   "role": {
     "maxInjectChars": 6000
   },
+  "memoryRouting": {
+    "enabled": true,
+    "fishChats": [
+      "private:2456904811"
+    ],
+    "mnemonScope": "groups",
+    "mnemonSpace": "QQ 群聊记忆",
+    "mnemonSpaceId": ""
+  },
   "snowluma": {
     "wsUrl": "ws://127.0.0.1:3001",
     "httpUrl": "http://127.0.0.1:3000",

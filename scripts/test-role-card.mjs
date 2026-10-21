@@ -107,16 +107,24 @@ test('真实人格卡可用，且筛选不丢公共内容', () => {
   assert.doesNotMatch(v2, /空格分隔（例如|\[SILENT\]/);
 });
 
-test('roles/ 下每张人格卡都能解析，且不超过默认注入上限', () => {
+test('roles/ 下每张人格卡都能解析，且不超过配置允许的硬上限', () => {
   const dir = new URL('../roles/', import.meta.url);
   const files = fs.readdirSync(dir).filter((name) => name.endsWith('.md') && name !== 'README.md');
   assert.ok(files.length >= 2, `roles/ 下应至少有两张人格卡，实际 ${files.length}`);
+  // 注入上限是 role.maxInjectChars（默认 6000，配置允许到 20000）。
+  // 这里**不断言 6000**：迁移自 QQAgent 的几张卡是故意超过默认值的（原文就有那么长，
+  // 在 QQAgent 里也是每条消息全量注入），它们要求管理员把上限调大 —— 见迁移文档。
+  // 断言的是「能解析 + 不超过硬上限」，并列出超过默认上限的卡，方便控制台核对。
+  const 超默认 = [];
   for (const name of files) {
     const raw = fs.readFileSync(new URL(name, dir), 'utf8');
     for (const mode of ['v1', 'v2']) {
       const text = selectRoleText(raw, mode);
       assert.ok(text.length > 0, `${name} 在 ${mode} 下注入了空文本`);
-      assert.ok(text.length <= 6000, `${name} 在 ${mode} 下 ${text.length} 字符，超过默认注入上限 6000`);
+      assert.ok(text.length <= 20000, `${name} 在 ${mode} 下 ${text.length} 字符，超过硬上限 20000`);
     }
+    const 长度 = selectRoleText(raw, 'v2').length;
+    if (长度 > 6000) 超默认.push(`${name}(${长度})`);
   }
+  if (超默认.length) console.log(`ℹ️ 超过默认注入上限 6000 的人格卡（需调 role.maxInjectChars）：${超默认.join('、')}`);
 });

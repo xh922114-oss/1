@@ -30,6 +30,8 @@ import * as bridgeExt from '../src/bridge-extensions.js';
 import * as groupStyle from '../src/social/group-style.js';
 // 入站语音转文字（迁移自 QQAgent）：桥接里用到 fetchPttText / recordLabel / DEFAULT_PTT_TIMEOUT_MS
 import * as voiceTranscribe from '../src/voice-transcribe.js';
+// 记忆分流（私聊 → fish-memory / 群聊 → mnemon）：桥接里用到 memoryRoutingLine 等四个函数
+import * as memoryRouting from '../src/memory-routing.js';
 import { unwrap, createTurnCollector } from '../src/dsh-client.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -183,14 +185,16 @@ export async function bridgeHarness({ config = {}, savedState, files = {}, globa
     execFileSync: () => '',
     // process 桩要带 env：voice-core / bridge 会读 process.env.FFMPEG_PATH、FFPROBE_PATH 等。
     // 之前只给 pid/platform/kill/exit，导致 `process.env.FFMPEG_PATH` 直接抛 TypeError。
-    process: { pid: process.pid, platform: process.platform, kill: process.kill, env: {}, exit: (code) => { throw new Error('unexpected exit ' + code); } },
+    // 另外把 DSH_HOME 指到本次的临时目录：记忆分流会往 $DSH_HOME/fish-memory-config.json 写
+    // 「哪些会话开了记忆档」，测试绝不能写用户真实的 ~/.dsh 配置。
+    process: { pid: process.pid, platform: process.platform, kill: process.kill, env: { DSH_HOME: temp }, exit: (code) => { throw new Error('unexpected exit ' + code); } },
     setTimeout: (fn, ms) => { const timer = setTimeout(fn, ms); timers.add(timer); return timer; },
     clearTimeout, setInterval: () => ({ unref() {} }), clearInterval: () => {},
     NodeApiClient: class { constructor() { return api; } },
     SnowLumaWebSocketClient: FakeBot, text: (s) => s,
     discoverDshLaunchToken: () => '', unwrap, createTurnCollector,
     ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker, ...stickerLimits,
-    ...groupStyle, ...voiceTranscribe,
+    ...groupStyle, ...voiceTranscribe, ...memoryRouting,
     ...modelPrices, ...dshModel, ...quoteForward, ...modeHandover, ...roleCard, ...tokenLedger, ...voiceLib, ...stateAcl, ...presetPrompt, ...bridgeExt,
     // ACL 收紧会 spawn icacls 去改**真实**文件系统；测试不该做这件事（同理见下面的
     // cleanupTemp / processAudioVolume 桩）。桩成成功，让 hardenStateDirAcl 走正常分支。

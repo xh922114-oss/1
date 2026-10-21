@@ -176,6 +176,29 @@ const SAFE_EXACT = new Set([
 ])
 
 /**
+ * 记忆工具（迁移：私聊记忆进 fish-memory、群聊记忆进 mnemon，见 docs/guides/QQAGENT_MIGRATION.md）。
+ *
+ * 为什么可以放行：
+ *   · `remember` 是 dsh-fish-memory 的工具，且**只挂在被打开记忆档的那个会话上**
+ *     （插件按会话默认关）；它只写这个会话自己的记忆文件，不碰本地文件、不联网。
+ *   · `mnemon_remember` / `mnemon_recall` 只读写 mnemon 的记忆库（Memory Space），
+ *     同样不碰本地文件、不执行命令。
+ *   · `mnemon_memory_bodies`（只读查空间）与 `mnemon_memory_body_create`（建空间）是为了
+ *     "第一次写入前没有空间"这个现实：建空间是加法操作，不删不改已有数据。
+ * 刻意**不放行**：`mnemon_forget`（删除）、`mnemon_document_manage`（写文档）、
+ * `mnemon_view_action` / `mnemon_memory_body_*` 的 update/merge（管理面）、`mnemon_link`。
+ */
+const SAFE_MEMORY_TOOLS = new Set([
+  'remember',
+  // 群聊记忆：先查空间（只读）、没有就建一个，再写。
+  // 允许 create 是因为 mnemon 的 Memory Space 不会自动出现，而建空间本身是加法的、不删数据。
+  'mnemon_memory_bodies',
+  'mnemon_memory_body_create',
+  'mnemon_remember',
+  'mnemon_recall',
+])
+
+/**
  * v0.3.0：L1「本地只读 Agent」（qq-agent-readonly preset）额外放行的只读工具。
  *
  * 为什么 L1 不能只靠 DSH 的 read-only 沙箱：rc.2 文档写明 Windows 上 read-only 是 partial
@@ -245,6 +268,7 @@ export function apply(ctx, config = {}) {
     const name = exec?.name
     if (typeof name !== 'string' || name.length === 0) return '工具名无效，已拒绝'
     if (SAFE_EXACT.has(name)) return
+    if (SAFE_MEMORY_TOOLS.has(name)) return
     if (extraAllowed.has(name)) return protectedFileReason(exec)
     if (SAFE_PREFIXES.some((prefix) => name.startsWith(prefix))) return
     if (readonlyAgent) return `工具 "${name}" 不在 L1 只读 Agent 白名单内，已拒绝（L1 只允许读文件/检索/联网只读；需要写入或执行命令请让 owner 在 QQ 私聊用 /level L2 申请提升）`

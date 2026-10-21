@@ -195,6 +195,100 @@ QQAgent 的插件是"确定性型"（靠 `providers` / `hooks` 生效），本�
 | `whale-memes` | 按情绪挑梗鲸表情包发出去 | 已覆盖（合并组 G5） | 本仓库表情链路更懂 QQ（收藏同步、一条一张、可引用可 @、备注作资料注入、收藏限流）；"梗鲸图库"如需保留，用 G2 的发图出口 + 直链即可 |
 | `account-pool` | 多个 LLM 端点轮换 + 权重 + 冷却 | 舍弃 | 它实现的是 QQAgent `llm.endpoint-pick` 契约；本仓库的模型由 DSH 的 `session.selectModel` 决定，没有可插的端点池。真要轮换是 DSH provider 层的事 |
 
+## 三·补、人设（persona）迁移
+
+QQAgent 的人设分三层：`persona`（默认）、`customPersonas[]`（自定义卡）、`personaByChat`（按会话覆盖）。
+本仓库的人设只有一层 `roles/*.md`（全局当前角色 + 控制台切换），所以按"一张卡 = 一个会话人设"落成文件：
+
+| 来源 | 落到 | 字数 | 需要 `role.maxInjectChars` |
+| --- | --- | --- | --- |
+| `persona.roleText`（默认小鲸鱼） | `roles/小鲸鱼-默认人设.md` | 2667 | 不用调（≤6000） |
+| `personaByChat["private:3247230872"]`（群友版；`3334802338` 同一份） | `roles/小鲸鱼-群友版.md` | 6259 | ≥ 6500 |
+| `personaByChat["private:2456904811"]`（私人版） | `roles/小鲸鱼-私人版.md` | 13973 | ≥ 14000 |
+| `customPersonas[0]`（八奈见杏菜版） | `roles/八奈见杏菜.md` | 8988 | ≥ 9000 |
+| `personaByChat["group:1128664189"]` + `customRules`（守秘人原版） | `roles/守秘人-原版.md` | 8398 | ≥ 8500 |
+| 上一轮我已整理的守秘人精简卡 | `roles/守秘人.md`（保持不动） | 4788 | 不用调 |
+
+**处理规则**（脚本 `build-role-cards.mjs`，一次性执行，不随仓库走）：
+
+- **工具名映射到本仓库真实存在的工具**，否则人设里会出现调用不了的名字：
+  `send_message→qq_send_message`、`send_poke→qq_send_poke`、`send_sticker→qq_send_sticker`、
+  `list_stickers→qq_list_stickers`、`get_sticker_image→qq_get_sticker_image`、
+  `sticker_note→qq_sticker_note`、`collect_sticker→qq_collect_sticker`、
+  `get_message_images→qq_get_message_images`、`memory_*→qq_memory_*`、
+  `web_search/web_fetch→mcp__web-search-safe__web_search/web_fetch`、
+  `trpg-dice__roll_dice/__check→qq_roll_dice/qq_check`。
+- 正文其余内容**一字未改**（人设要忠实）；缺标题的补 `# 角色卡：<名>`。
+- 守秘人的 `customRules`（本群发言规则）并入 `守秘人-原版.md` 的最后一节。
+
+**没迁的一张**：`customPersonas[2]` / `personaByChat["group:1073022225"]`（小鲸鱼涩涩版，两份内容相同）。
+它是露骨性描写的人格卡，我不代为生成。需要的话你在控制台「人格与角色」新建一张、把原文贴进去即可
+（源在一个地方：`D:\QQAgent\data\config.json` 的 `personaByChat["group:1073022225"].roleText`）。
+
+**两个必须知道的差别**：
+
+1. **本仓库的角色是全局的**（`state/current-role.json`），没有"按会话自动切人设"。
+   QQAgent 的 `personaByChat` 是自动按会话切的 —— 这条能力**没有迁**，目前只能人工 `/role <名字>` 切。
+   要不要做成"按会话自动选角色"，属于新功能（需要桥接在唤醒时按 key 查表），见第四节第 5 条。
+2. **超过 6000 的卡会被截断**（`role.maxInjectChars` 默认 6000）。这四张卡在 QQAgent 里本来就是
+   每条消息全量注入的，所以把上限调到表里写的值，成本与你在 QQAgent 时一致；不想付这个成本就用
+   `roles/小鲸鱼-群友版.md` 或 `守秘人.md`（精简卡）。控制台会标出"超出上限"。
+
+## 三·补2、记忆分流（私聊 → fish-memory，群聊 → mnemon）
+
+QQAgent 只有一套 `memory_*`。本仓库照你的要求分成两个外部插件，桥接多做两件事：
+**给指定私聊在 fish-memory 里开一个记忆档**、**每轮唤醒提示词里加一行"记忆该写哪"**。
+
+| 会话 | 长期记忆写到 | 机制 |
+| --- | --- | --- |
+| `private:2456904811` | **dsh-fish-memory** | 该会话的 DSH session id 写进 `fish-memory-config.json` 的 `sessions[sid]=true`；插件按会话默认关，所以只开这一个 |
+| `group:*`（所有群） | **dsh-mnemon**（Memory Space「QQ 群聊记忆」） | 提示词点名空间；模型用 `mnemon_remember` 写、`mnemon_recall` 读；空间不存在时先 `mnemon_memory_body_create` |
+| 其它私聊 | 只有本仓库的 `qq_memory_*`（会话短期记忆） | 不加任何提示词行 |
+
+**代码落点**：
+
+- `src/memory-routing.js`：纯函数 —— 配置归一化、`memoryStoreFor()`、`memoryRoutingLine()`、
+  `enableFishMemorySession()`（读-改-写 fish-memory 的配置，幂等、保留别人的会话、坏文件当空对象重来）。
+- `src/bridge.js` 两处接线：`ensureSession()` 包一层，判定为 fish 的会话在拿到 session id 后开记忆档
+  （同一个 sid 只写一次）；`buildWakePromptV2Core()` 在 `memoryLine` 之后插入 `memoryRouteLine`。
+- `plugins/qq-agent-presets/qq-tool-restrict.mjs`：新增 `SAFE_MEMORY_TOOLS` 并在执行期 guard 里放行 ——
+  `remember`、`mnemon_memory_bodies`（查空间，只读）、`mnemon_memory_body_create`（建空间，加法）、
+  `mnemon_remember`、`mnemon_recall`。**不放行** `mnemon_forget` / `mnemon_document_manage` /
+  `mnemon_view_action` / `mnemon_memory_body_update|merge` / `mnemon_link`（删除与管理面）。
+
+**配置**（`config.json` 的 `memoryRouting`，全部可关）：
+
+| 字段 | 默认 | 说明 |
+| --- | --- | --- |
+| `enabled` | `true` | 总开关；关掉 = 不写 fish-memory 配置、也不加提示词行 |
+| `fishChats` | `["private:2456904811"]` | 哪些会话的长期记忆归 fish-memory |
+| `mnemonScope` | `'groups'` | `'groups'` = 所有群；`'off'` = 不提示 |
+| `mnemonSpace` | `'QQ 群聊记忆'` | 空间名字，提示词里点名 |
+| `mnemonSpaceId` | `''` | 已知空间 id 时填上，提示词直接点名、省得模型每次去查 |
+
+**环境侧（不在仓库里，已改你的 DSH profile）**：
+
+- `dsh-fish-memory@1.1.9` 已装进 `C:\Users\XH\.dsh\profiles\desktop`：
+  `vendor/dsh-fish-memory-1.1.9.tgz` + `dependencies` + `dsh.profile.bundles`；
+  原 `package.json` / `pnpm-lock.yaml` / `cordis.patch.yml` 备份在 `D:\deepseek\_migrate\profile-backup\`。
+  **要重启 DSH 才会加载**。
+- mnemon 的 Memory Space **不会自动创建**：本仓库会在群里第一次要写记忆时让模型自己建
+  （`mnemon_memory_body_create` 已放行）。也可以你在 Mnemon 界面手动建一个「QQ 群聊记忆」，
+  再把 id 填到 `memoryRouting.mnemonSpaceId`，省掉模型每次的"查/建"两步。
+
+**三个已知代价 / 风险**（都写在代码注释里）：
+
+1. **mnemon 不按群隔离**：所有群的记忆进同一个空间，跨群召回是可能的（本仓库自己的 `qq_memory_*`
+   有人物可见性策略，mnemon 没有）。要隔离就得每个群一个空间 + 按 key 填 `mnemonSpaceId`，本次没做。
+2. **fish-memory 每轮注入 + 写放大**：它每轮把召回文本注入系统提示（上限 6 条 / 800 字），
+   并且每次注入都会把 trace 写回该会话的 JSON。只开一个会话，代价可控。
+3. **提示词多一行**：约 60~120 字（≈ 40~80 token）/轮。不归这两个库的会话不加。
+
+**测试**：`scripts/test-memory-routing.mjs`（6 组断言：归一化、store 判定、提示词行、
+fish-memory 配置写入、工具闸门、桥接接线）。
+
+
+
 ### 模型信息
 
 | QQAgent 的模型信息 | 判定 | 落点 |
