@@ -3,6 +3,31 @@
 本仓库（qq-bridge-enhanced）基于上游 [Derpyu520/qq-bridge](https://github.com/Derpyu520/qq-bridge) `v0.2.0-r3`。
 上游更早的版本历史见 [docs/guides/DSH_020_ADAPTATION.md](docs/guides/DSH_020_ADAPTATION.md) 与上游 Release 页面。
 
+## v1.3.1 —— 2026-10-21
+
+**两处口径修正**：人设支持按会话选卡（`role.byChat`）；群聊记忆收窄为**桌游游玩存档**。
+
+### 人设：按会话选卡（`role.byChat`）
+- 新增 `pickRoleName(key, byChat, fallback)`（`src/role-card.js`）：精确 key → `group:*` / `private:*` 通配
+  → `state/current-role.json` 全局角色。
+- 桥接取用链透传 key：`roleRawContent(key)` / `roleHintForMode(mode, key)` /
+  `currentRoleHint(key)` / `currentRoleHintV2(key)`，5 个调用点传当前会话 key
+  （`startConsoleServer` 的状态展示仍用全局角色）。
+- 这样 QQAgent 的 `personaByChat` 有了对应物：私聊 2456904811 用「小鲸鱼-私人版」、
+  跑团群用「守秘人-原版」，互不影响；没配的会话照旧走全局 `/role`。
+- 配置示例新增 `role.byChat: {}`；`test-role-card` 补一条「精确 key → 通配 → 全局回落」的用例。
+
+### 群聊记忆：只存桌游游玩存档
+- `memoryRouting.mnemonSpace` 默认值改为「桌游游玩存档」；群聊那一行提示词改成
+  「只存**跑团游玩存档**（进度、关键抉择与后果、登场 NPC、伏笔与未结线索），不要存普通闲聊」。
+- 空间描述同步：这个空间是跑团存档，不是群聊闲聊库。
+- `test-memory-routing` 补两条断言（跑团存档 / 不存普通闲聊）。
+
+### 升级注意（从 v1.3.0）
+- 重启桥接即可；要按会话切人设就填 `role.byChat`（并用 `role.maxInjectChars` 放得下最大的卡）。
+- mnemon 的「桌游游玩存档」空间：本机没建成（Host 的 Memory Space 视图不给写），
+  在 Mnemon 界面手动建一个同名空间，或等群里第一次写跑团存档时由模型建。
+
 ## v1.3.0 —— 2026-10-21
 
 **人设迁移 + 记忆分流**：QQAgent 的人设落成 `roles/*.md`（5 张，含守秘人原版）；

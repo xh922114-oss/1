@@ -106,3 +106,29 @@ export function roleCharStats(text) {
 // 一代仿真遗留指令：未加模式标记时，这些行在二代下会被兜底过滤。
 // 正确做法是给所在小节加上 〔一代〕 标记。
 export const GEN1_ROLE_LINE_RE = /\[SILENT\]|空格分隔|按空格|用空格|空格分句|空格代表|自动转发|回复会自动|输出\s*\[SILENT\]/i;
+
+/**
+ * 按会话挑人格卡（`role.byChat`）。
+ *
+ * 为什么需要：本仓库的角色是全局的（`state/current-role.json`），而 QQAgent 的 `personaByChat`
+ * 是**按会话**切人设的 —— 私聊要私人版、跑团群要守秘人。没有这一层时只能全局 `/role`，
+ * 一换就所有群一起变。查找顺序：
+ *   1. 精确 key（`private:2456904811` / `group:1128664189`）
+ *   2. 同类通配（`group:*` / `private:*`）
+ *   3. 全局当前角色（`state/current-role.json`）
+ *
+ * @param {string} key  会话 key
+ * @param {object} byChat  `role.byChat` 配置（可空/可非对象）
+ * @param {string} fallback 全局角色名
+ * @returns {string} 角色名；空串表示不注入人格（与原来的行为一致）
+ */
+export function pickRoleName(key, byChat, fallback = '') {
+  const 取 = (v) => (typeof v === 'string' ? v.trim() : '');
+  const 表 = byChat && typeof byChat === 'object' && !Array.isArray(byChat) ? byChat : null;
+  if (!表) return 取(fallback);
+  const k = String(key ?? '').trim();
+  if (k && 取(表[k])) return 取(表[k]);
+  const 通配 = k.startsWith('group:') ? 'group:*' : (k.startsWith('private:') ? 'private:*' : '');
+  if (通配 && 取(表[通配])) return 取(表[通配]);
+  return 取(fallback);
+}

@@ -38,7 +38,7 @@ assert.equal(normalizeMemoryRouting({ mnemonScope: 'off' }).mnemonScope, 'off')
 ok('归一化：默认值 / 类型回落 / 显式关闭')
 
 // ── store 判定 ────────────────────────────────────────────────────────────
-const 配置 = { enabled: true, fishChats: ['private:2456904811'], mnemonScope: 'groups', mnemonSpace: 'QQ 群聊记忆' }
+const 配置 = { enabled: true, fishChats: ['private:2456904811'], mnemonScope: 'groups', mnemonSpace: '桌游游玩存档' }
 assert.equal(memoryStoreFor('private:2456904811', 配置), 'fish')
 assert.equal(memoryStoreFor('group:1128664189', 配置), 'mnemon')
 assert.equal(memoryStoreFor('private:999', 配置), 'none', '其它私聊不归这两个库')
@@ -53,7 +53,9 @@ assert.match(私聊行, /`remember`/)
 assert.match(私聊行, /`qq_memory_\*` 只当/, '必须明确说短期笔记，不然模型两边都写')
 const 群行 = memoryRoutingLine('group:1128664189', 配置)
 assert.match(群行, /mnemon/)
-assert.match(群行, /QQ 群聊记忆/, '点名 Memory Space')
+assert.match(群行, /跑团游玩存档/, '群聊只存跑团存档')
+assert.match(群行, /不要存普通闲聊/, '明确不存普通闲聊')
+assert.match(群行, /桌游游玩存档/, '点名 Memory Space')
 assert.equal(memoryRoutingLine('private:999', 配置), '', '不归它的会话一个字都不加')
 ok('提示词：私聊/群各一条、点名库与空间、其它会话不加')
 

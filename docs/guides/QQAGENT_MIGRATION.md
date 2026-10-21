@@ -227,22 +227,39 @@ QQAgent 的人设分三层：`persona`（默认）、`customPersonas[]`（自定
 
 **两个必须知道的差别**：
 
-1. **本仓库的角色是全局的**（`state/current-role.json`），没有"按会话自动切人设"。
-   QQAgent 的 `personaByChat` 是自动按会话切的 —— 这条能力**没有迁**，目前只能人工 `/role <名字>` 切。
-   要不要做成"按会话自动选角色"，属于新功能（需要桥接在唤醒时按 key 查表），见第四节第 5 条。
+1. **按会话选卡已经补上了**（`role.byChat`，v1.3.1）：查找顺序是
+   精确 key → `group:*` / `private:*` 通配 → `state/current-role.json` 的全局角色。
+   也就是 QQAgent 的 `personaByChat` 现在有了对应物；没配 `byChat` 的会话仍用全局 `/role`。
+   现成的映射可以直接抄进 `config.json`：
+
+   ```json
+   "role": {
+     "maxInjectChars": 14000,
+     "byChat": {
+       "private:2456904811": "小鲸鱼-私人版",
+       "private:3247230872": "小鲸鱼-群友版",
+       "private:3334802338": "小鲸鱼-群友版",
+       "group:1128664189": "守秘人-原版"
+     }
+   }
+   ```
+
+   （`maxInjectChars` 按最大的那张卡给：私人版 13973 → 14000；只用精简卡的话 6000 就够。）
 2. **超过 6000 的卡会被截断**（`role.maxInjectChars` 默认 6000）。这四张卡在 QQAgent 里本来就是
    每条消息全量注入的，所以把上限调到表里写的值，成本与你在 QQAgent 时一致；不想付这个成本就用
    `roles/小鲸鱼-群友版.md` 或 `守秘人.md`（精简卡）。控制台会标出"超出上限"。
 
-## 三·补2、记忆分流（私聊 → fish-memory，群聊 → mnemon）
+## 三·补2、记忆分流（私聊 → fish-memory，群聊 → mnemon 跑团存档）
 
 QQAgent 只有一套 `memory_*`。本仓库照你的要求分成两个外部插件，桥接多做两件事：
 **给指定私聊在 fish-memory 里开一个记忆档**、**每轮唤醒提示词里加一行"记忆该写哪"**。
+群聊那半边按你后来的口径**只存桌游游玩存档**（进度、关键抉择与后果、登场 NPC、伏笔与未结线索），
+不存普通闲聊 —— 提示词里就是这么写的。
 
 | 会话 | 长期记忆写到 | 机制 |
 | --- | --- | --- |
 | `private:2456904811` | **dsh-fish-memory** | 该会话的 DSH session id 写进 `fish-memory-config.json` 的 `sessions[sid]=true`；插件按会话默认关，所以只开这一个 |
-| `group:*`（所有群） | **dsh-mnemon**（Memory Space「QQ 群聊记忆」） | 提示词点名空间；模型用 `mnemon_remember` 写、`mnemon_recall` 读；空间不存在时先 `mnemon_memory_body_create` |
+| `group:*`（所有群） | **dsh-mnemon**（Memory Space「桌游游玩存档」，**只存跑团游玩存档**） | 提示词点名空间；模型用 `mnemon_remember` 写、`mnemon_recall` 读；空间不存在时先 `mnemon_memory_body_create` |
 | 其它私聊 | 只有本仓库的 `qq_memory_*`（会话短期记忆） | 不加任何提示词行 |
 
 **代码落点**：
@@ -263,17 +280,20 @@ QQAgent 只有一套 `memory_*`。本仓库照你的要求分成两个外部插�
 | `enabled` | `true` | 总开关；关掉 = 不写 fish-memory 配置、也不加提示词行 |
 | `fishChats` | `["private:2456904811"]` | 哪些会话的长期记忆归 fish-memory |
 | `mnemonScope` | `'groups'` | `'groups'` = 所有群；`'off'` = 不提示 |
-| `mnemonSpace` | `'QQ 群聊记忆'` | 空间名字，提示词里点名 |
+| `mnemonSpace` | `'桌游游玩存档'` | 空间名字，提示词里点名（内容限定为跑团存档） |
 | `mnemonSpaceId` | `''` | 已知空间 id 时填上，提示词直接点名、省得模型每次去查 |
 
 **环境侧（不在仓库里，已改你的 DSH profile）**：
+
+> 先说明：**本机没有找到 dsh-qq 的运行目录**（没有 `config.json`、没有 `state/`，也没有在跑的 `bridge.js`），
+> 所以代码与配置示例都在仓库里，运行时配置要你在部署目录按上面那段 JSON 自己填。
 
 - `dsh-fish-memory@1.1.9` 已装进 `C:\Users\XH\.dsh\profiles\desktop`：
   `vendor/dsh-fish-memory-1.1.9.tgz` + `dependencies` + `dsh.profile.bundles`；
   原 `package.json` / `pnpm-lock.yaml` / `cordis.patch.yml` 备份在 `D:\deepseek\_migrate\profile-backup\`。
   **要重启 DSH 才会加载**。
 - mnemon 的 Memory Space **不会自动创建**：本仓库会在群里第一次要写记忆时让模型自己建
-  （`mnemon_memory_body_create` 已放行）。也可以你在 Mnemon 界面手动建一个「QQ 群聊记忆」，
+  （`mnemon_memory_body_create` 已放行）。也可以你在 Mnemon 界面手动建一个「桌游游玩存档」，
   再把 id 填到 `memoryRouting.mnemonSpaceId`，省掉模型每次的"查/建"两步。
 
 **三个已知代价 / 风险**（都写在代码注释里）：

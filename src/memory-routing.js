@@ -20,10 +20,10 @@ export const MEMORY_ROUTING_DEFAULTS = Object.freeze({
   enabled: true,
   /** 这些会话的长期记忆归 fish-memory（写 key，例如 "private:2456904811"） */
   fishChats: ['private:2456904811'],
-  /** 群聊记忆归 mnemon（'groups' = 所有群；'off' = 不提示） */
+  /** 群聊记忆归 mnemon（'groups' = 所有群；'off' = 不提示）。内容限定为**跑团游玩存档** */
   mnemonScope: 'groups',
-  /** mnemon 里群聊记忆所在的 Memory Space 名字（仅用于提示词里点名，可不填） */
-  mnemonSpace: 'QQ 群聊记忆',
+  /** mnemon 里跑团存档所在的 Memory Space 名字（仅用于提示词里点名，可不填） */
+  mnemonSpace: '桌游游玩存档',
   /** 该空间的 id（已知时填上，提示词会直接点名，省得模型每次去查） */
   mnemonSpaceId: '',
 })
@@ -64,6 +64,7 @@ export function memoryRoutingLine(key, 配置 = MEMORY_ROUTING_DEFAULTS) {
       + '`qq_memory_*` 只当本次会话的短期笔记，别拿它存"以后还要用"的事。'
   }
   if (归 === 'mnemon') {
+    // 群聊只存**跑团游玩存档**，不存普通闲聊（用户口径：「QQ群聊就保存桌游游玩存档就行」）。
     const c = normalizeMemoryRouting(配置)
     // 空间可能还不存在（mnemon 不会自动建）。分两种情况说清楚，别让模型自己猜：
     //   · 已知空间 id → 直接写进去；
@@ -73,8 +74,9 @@ export function memoryRoutingLine(key, 配置 = MEMORY_ROUTING_DEFAULTS) {
       : (c.mnemonSpace
         ? `（先 \`mnemon_memory_bodies\` 查有没有「${c.mnemonSpace}」这个空间；没有就用 \`mnemon_memory_body_create\` 建一个同名的，之后 \`mnemon_remember\` 带上它的 memoryBodyId）`
         : '')
-    return `【记忆归属】群里的长期记忆写进 mnemon${指定}：值得长期留的事用 \`mnemon_remember\` 记一句，`
-      + '要回忆先用 `mnemon_recall` 查；`qq_memory_*` 只当本群短期笔记，不要拿它存长期事实。'
+    return `【记忆归属】群里的长期记忆只存**跑团游玩存档**（进度、关键抉择与后果、登场 NPC、伏笔与未结线索），`
+      + `不要存普通闲聊。写进 mnemon${指定}：用 \`mnemon_remember\` 一条记一件事；要回忆先用 \`mnemon_recall\` 查。`
+      + '`qq_memory_*` 只当本群短期笔记，不要拿它存长期事实。'
   }
   return ''
 }

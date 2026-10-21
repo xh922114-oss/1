@@ -3,7 +3,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import { test } from 'node:test';
-import { parseRoleSections, roleCharStats, roleSectionReport, selectRoleText } from '../src/role-card.js';
+import { parseRoleSections, pickRoleName, roleCharStats, roleSectionReport, selectRoleText } from '../src/role-card.js';
 
 const CARD = [
   '# 角色卡：测试',
@@ -127,4 +127,25 @@ test('roles/ 下每张人格卡都能解析，且不超过配置允许的硬上�
     if (长度 > 6000) 超默认.push(`${name}(${长度})`);
   }
   if (超默认.length) console.log(`ℹ️ 超过默认注入上限 6000 的人格卡（需调 role.maxInjectChars）：${超默认.join('、')}`);
+});
+
+
+test('按会话选人格卡：精确 key → 通配 → 全局回落', () => {
+  const byChat = {
+    'private:2456904811': '小鲸鱼-私人版',
+    'group:1128664189': '守秘人-原版',
+    'private:*': '小鲸鱼-群友版',
+    'group:*': '小鲸鱼-默认人设',
+  };
+  assert.equal(pickRoleName('private:2456904811', byChat, '全局卡'), '小鲸鱼-私人版', '精确 key 优先');
+  assert.equal(pickRoleName('group:1128664189', byChat, '全局卡'), '守秘人-原版');
+  assert.equal(pickRoleName('private:999', byChat, '全局卡'), '小鲸鱼-群友版', '私聊通配兜底');
+  assert.equal(pickRoleName('group:999', byChat, '全局卡'), '小鲸鱼-默认人设', '群通配兜底');
+  assert.equal(pickRoleName('group:999', {}, '全局卡'), '全局卡', '没配置就回落到全局角色');
+  assert.equal(pickRoleName('group:999', undefined, ''), '', '都没有就不注入人格');
+  assert.equal(pickRoleName('', byChat, '全局卡'), '全局卡', '没有 key 时套不上任何通配，回落全局');
+  // 空字符串值视为没配
+  assert.equal(pickRoleName('group:1', { 'group:1': '  ', 'group:*': '群卡' }, '全局'), '群卡');
+  // 非对象配置不炸
+  assert.equal(pickRoleName('group:1', '不是对象', '全局'), '全局');
 });

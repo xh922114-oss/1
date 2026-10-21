@@ -13,7 +13,7 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import yaml from 'js-yaml';
 import { extractPresetPrefix, presetPromptBlockers, presetPromptWarnings, renderPresetPromptYaml } from './preset-prompt.js';
-import { GEN1_ROLE_LINE_RE, parseRoleSections, roleCharStats, roleSectionReport, selectRoleText } from './role-card.js';
+import { GEN1_ROLE_LINE_RE, parseRoleSections, pickRoleName, roleCharStats, roleSectionReport, selectRoleText } from './role-card.js';
 import { fileURLToPath } from 'node:url';
 import { SnowLumaWebSocketClient, text } from '@snowluma/sdk';
 import { NodeApiClient, unwrap, createTurnCollector, discoverDshLaunchToken } from './dsh-client.js';
@@ -10259,7 +10259,7 @@ async function main() {
     st.activeExitAt = now;
     // 先取消尚未触发的旧回复/补刀定时器，避免退场期间再冒出旧发言
     cancelSocialTimers(key);
-    const roleHint = currentRoleHint();
+    const roleHint = currentRoleHint(typeof key === 'string' ? key : '');
     const promptText = buildActiveExitPrompt(key, roleHint);
     scheduleSocialReply(
       key, promptText,
@@ -10441,7 +10441,7 @@ async function main() {
               st.proactiveNextCheckAt = now + randInt(Number(cfg.social?.proactiveCheckMinMs ?? 2700000), Number(cfg.social?.proactiveCheckMaxMs ?? 5400000));
               if (Math.random() < Number(cfg.social?.proactiveProbability ?? 0.2)) {
                 enterActive(key);
-                const roleHint = currentRoleHint();
+                const roleHint = currentRoleHint(typeof key === 'string' ? key : '');
                 const promptText = buildProactivePrompt(key, roleHint);
                 scheduleSocialReply(
                   key, promptText,
@@ -10557,7 +10557,7 @@ async function main() {
         log(`摘要投喂创建会话失败 (${k}): ${error?.message ?? error}`);
         continue;
       }
-      const roleHint = currentRoleHint();
+      const roleHint = currentRoleHint(typeof key === 'string' ? key : '');
       const summaryText = `${roleHint ? roleHint + '\n\n' : ''}【群聊摘要】过去一段时间群里发生了这些（你未逐条参与）：\n${lines}\n\n【最近对话】\n${buildContextBlock(k)}\n\n你不需要回复，只需记住这些内容，后续聊天会更自然。`;
       const silentId = Date.now() + '-' + Math.random().toString(36).slice(2, 8);
       social.silentTurns.set(sessionId, [...(social.silentTurns.get(sessionId) ?? []), { id: silentId, ts: Date.now() }]);
@@ -10600,14 +10600,17 @@ async function main() {
   // 缓存 key 为两个文件的 mtime，mtime 未变时直接返回，避免每次同步读文件。
   let roleHintCache = { key: '', raw: '' };
   // 原始人格卡（按 mtime 缓存，不截断）。
-  function roleRawContent() {
+  function roleRawContent(key = '') {
     try {
       const rs = readRoleState();
-      if (!rs.role) return '';
+      // 按会话挑角色（role.byChat）：精确 key → group:*/private:* → 全局 state/current-role.json。
+      // 挑不到就回落到全局角色；全局也没有就不注入人格。
+      const 角色名 = pickRoleName(key, cfg.role?.byChat, rs.role);
+      if (!角色名) return '';
       // 读取点也必须校验人格名：写入点（控制台 /role 命令）都过 sanitizeRoleName，
       // 但 state/current-role.json 是**用户可直接编辑**的文件。没有这道校验时，
       // {"role":"../../../../Users/Public/x"} 会让 roles/ 之外的文件被读进来并注入每一条提示词。
-      const safeName = sanitizeRoleName(rs.role);
+      const safeName = sanitizeRoleName(角色名);
       if (!safeName || safeName.includes('..')) return '';
       const roleFile = path.join(ROLES_DIR, safeName + '.md');
       const resolved = path.resolve(roleFile);
@@ -10632,13 +10635,13 @@ async function main() {
   }
   // 按仿真模式取用：先用标题里的 〔一代〕/〔二代〕 标记筛掉另一模式的专属小节，
   // **再**按上限截断——这样另一模式的内容不会白白占掉本次的注入预算。
-  function roleHintForMode(mode) {
-    const selected = selectRoleText(roleRawContent(), mode);
+  function roleHintForMode(mode, key = '') {
+    const selected = selectRoleText(roleRawContent(key), mode);
     if (!selected) return '';
     return selected.length > roleInjectMaxChars ? truncateText(selected, roleInjectMaxChars) : selected;
   }
-  function currentRoleHint() {
-    return roleHintForMode('v1');
+  function currentRoleHint(key = '') {
+    return roleHintForMode('v1', key);
   }
 
   // 二代仿真模式专用角色提示：去掉一代的 [SILENT] / 空格分句等状态机指令，避免与工具协议冲突。
@@ -10728,9 +10731,9 @@ async function main() {
     return `第 ${bad.join('，')} 条之间像是把同一句话拆开了；如果两条拼起来才完整，请合并成一条，或把断点移到完整句子的边界。`;
   }
 
-  function currentRoleHintV2() {
+  function currentRoleHintV2(key = '') {
     // 先按 〔二代〕/〔一代〕 标记筛小节；下面的逐行过滤只是给「没标记的老卡片」兜底。
-    const raw = roleHintForMode('v2');
+    const raw = roleHintForMode('v2', key);
     if (!raw) return '';
     // 一代仿真模式专用指令整行过滤，避免污染二代工具协议。
     // 用 role-card.js 导出的那份（文件顶部已 import）：这里原先又抄了一份同源正则，
@@ -12287,7 +12290,7 @@ async function main() {
     }
 
     // 角色扮演提示注入（仅注入给 agent，不影响群友之间的正常对话语义）
-    const roleHint = currentRoleHint();
+    const roleHint = currentRoleHint(typeof key === 'string' ? key : '');
 
     // 群聊里带发送者信息，私聊不用；角色提示注入到消息开头（agent 可见）；
     // 管理员消息带身份标记（供 agent 识别，但其权限仍受工具面硬限制）
@@ -12355,7 +12358,7 @@ async function main() {
 
       // 触发成功：进入活跃，贴最近上下文 + 当前消息 + 人格（仅此一次），让 AI 回复
       enterActive(key);
-      const roleHint = currentRoleHint();
+      const roleHint = currentRoleHint(typeof key === 'string' ? key : '');
       const currentLine = (isOwner && kind === 'private') ? `【管理员】${sender}：${textContent}` : `${sender}：${textContent}`;
       const directionHint = textContent.includes('[引用') ? DIRECTION_HINT + '\n' : '';
       const replyInstruction = direct

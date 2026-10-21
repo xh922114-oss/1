@@ -11,7 +11,8 @@
     "visionFromReference": false
   },
   "role": {
-    "maxInjectChars": 6000
+    "maxInjectChars": 6000,
+    "byChat": {}
   },
   "memoryRouting": {
     "enabled": true,
@@ -19,7 +20,7 @@
       "private:2456904811"
     ],
     "mnemonScope": "groups",
-    "mnemonSpace": "QQ 群聊记忆",
+    "mnemonSpace": "桌游游玩存档",
     "mnemonSpaceId": ""
   },
   "snowluma": {
