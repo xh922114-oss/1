@@ -2130,6 +2130,7 @@ button:active:not(:disabled) {
         <label class="v2-tool-item"><input type="checkbox" data-v2-tool="setStickerRemark"> <span><b>qq_set_sticker_remark</b><span class="meta">修改 QQ 官方表情备注（默认禁用，慎用）</span></span></label>
         <label class="v2-tool-item"><input type="checkbox" data-v2-tool="sendVoice"> <span><b>qq_send_voice / qq_list_voices</b><span class="meta">发送语音条（只能发语音库里的音频；偶然而为的强表达）</span></span></label>
         <label class="v2-tool-item"><input type="checkbox" data-v2-tool="rollDice"> <span><b>qq_roll_dice / qq_check</b><span class="meta">掷骰与检定（跑团用；骰点由本机密码学随机数算出，模型编不了数字。迁移自 QQAgent）</span></span></label>
+        <label class="v2-tool-item"><input type="checkbox" data-v2-tool="sendImageUrl"> <span><b>qq_send_image_url</b><span class="meta">按 URL 发一张网图（桥接自己抓图并校验：禁内网、只认图片、限量；迁移自 QQAgent 的配图能力。默认关闭）</span></span></label>
       </div>
       <div class="meta" style="margin-top:6px">二代黑话学习：AI 可用 <code>qq_slang_submit</code> 提交陌生词，也可由桥接自动提取；管理员在「黑话词库」页面筛选确认后，词条会自动写入黑话提示词并注入 <code>qq_get_prompt</code> 与后续唤醒。</div>
 

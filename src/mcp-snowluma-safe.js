@@ -295,7 +295,7 @@ async function legacyReadToolAllowed() {
   return String(status?.mode ?? '') === 'closed-agent';
 }
 
-const server = new McpServer({ name: 'snowluma-safe', version: '1.1.0' });
+const server = new McpServer({ name: 'snowluma-safe', version: '1.2.0' });
 
 // ── 工具开关必须在**注册期**生效，而不是只在校验期 ──────────────────────────
 //
@@ -359,6 +359,8 @@ const TOOL_CONFIG_FLAGS = {
   // 迁移自 QQAgent：掷骰与检定（纯本地计算，不联网、不发消息）
   qq_roll_dice: 'rollDice',
   qq_check: 'rollDice',
+  // 迁移自 QQAgent 的配图扩展（合并组 G2）：按 URL 发网图（默认关）
+  qq_send_image_url: 'sendImageUrl',
 };
 const disabledTools = [];
 {
@@ -431,6 +433,40 @@ server.tool(
       : dndCheck({ modifier, dc, advantage, disadvantage, skillName, reason });
     if (r.error) return { content: [{ type: 'text', text: r.error }], isError: true };
     return { content: [{ type: 'text', text: r.text }] };
+  }
+);
+
+server.tool(
+  'qq_send_image_url',
+  '把网上的图片发到当前会话（迁移自 QQAgent 的配图能力）。传 http/https 图片地址，'
+  + '桥接会自己下载并校验（禁内网地址、只认 PNG/JPEG/GIF/WebP、有体积上限），再作为图片发出去。'
+  + '不能发本机文件路径、不能带文字说明（想配文就用 qq_send_message 单独发一条）。'
+  + '图片来自搜索/网页时，先用 web_search / web_fetch 拿到直链再发；地址失效或不是图片会明确报错。',
+  {
+    key: z.string().describe('目标会话，格式 group:群号 或 private:QQ号'),
+    imageUrl: z.string().describe('图片直链（http/https；指向图片本身，不是网页）'),
+    replyToMessageId: z.union([z.string(), z.number()]).optional().describe('可选：引用某条消息发送'),
+    atUserId: z.union([z.string(), z.number()]).optional().describe('可选：同时 @ 某人（仅群聊）')
+  },
+  async ({ key, imageUrl, replyToMessageId, atUserId }) => {
+    try {
+      if (replyToMessageId !== undefined && replyToMessageId !== null && String(replyToMessageId).trim() !== ''
+        && !/^-?[1-9]\d*$/.test(String(replyToMessageId).trim())) {
+        return { content: [{ type: 'text', text: 'replyToMessageId 必须是非零整数' }], isError: true };
+      }
+      const result = await agentApi('/api/socialV2/send-image', {
+        key,
+        imageUrl,
+        ...(replyToMessageId !== undefined && replyToMessageId !== null ? { replyToMessageId: String(replyToMessageId) } : {}),
+        ...(atUserId !== undefined && atUserId !== null ? { atUserId: String(atUserId) } : {})
+      });
+      if (!result?.ok) {
+        return { content: [{ type: 'text', text: errorText(result?.error, '发图失败') }], isError: true };
+      }
+      return { content: [{ type: 'text', text: `已发出（${result.bytes ?? '?'} 字节${result.messageId ? `，消息 id ${result.messageId}` : ''}）` }] };
+    } catch (error) {
+      return { content: [{ type: 'text', text: `发图失败：${error?.message ?? error}` }], isError: true };
+    }
   }
 );
 

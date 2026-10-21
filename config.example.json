@@ -216,7 +216,21 @@
       "sendVoice": false,
       "ownerRelay": false,
       "ownerGroupAccess": false,
-      "rollDice": true
+      "rollDice": true,
+      "sendImageUrl": false
+    },
+    "style": {
+      "enabled": true,
+      "sampleSize": 400,
+      "minSample": 30,
+      "adoptLevel": "贴近（推荐）",
+      "learnMinutes": 30,
+      "maxChars": 900
+    },
+    "imageSend": {
+      "maxBytes": 8388608,
+      "maxPerMinute": 2,
+      "maxPerHour": 10
     },
     "ownerRelay": {
       "maxPerHour": 10,

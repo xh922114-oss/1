@@ -21,6 +21,15 @@ const tests = [
   // 掷骰与检定（迁移自 QQAgent 的 trpg-dice）：表达式解析/取值、COC 六级判定与奖励惩罚骰、
   // DND 优势劣势与自然 20/1、暗骰不外泄、错误输入给人话。
   'test-dice.mjs',
+  // 群风格自适应（迁移自 QQAgent 的 adaptive-group-style）：窗口→统计行、样本不足不注入、
+  // 学出风格并渲染（含「底线不变」）、缓存隔离与保鲜、进攻性用语检测。
+  'test-group-style.mjs',
+  // 入站语音转文字（迁移自 QQAgent 的 speech-to-text-qq）：请求形状、无转写按失败处理、
+  // 超时/500/坏 JSON 不抛、缺参数不发请求、渲染与截断。
+  'test-voice-transcribe.mjs',
+  // 发网图（迁移自 QQAgent 的五个配图扩展，合并组 G2）：只认 http/https、桥接自己抓图、
+  // 抓不到/不是图片给人话、按会话限频、以及路由与工具确实接线。
+  'test-image-send.mjs',
   // 体检修复回归：无令牌智能体调用面、send-burst 失败回滚、唤醒限频重试、
   // 定时器类暂存唤醒补发、collector 生命周期、ownerQQ 覆盖语义、预设名校验、
   // wake triggers 白名单、memory-update 边界、wait 租约归一化、md/黑话/表情/账本；

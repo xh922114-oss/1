@@ -26,6 +26,10 @@ import * as voiceLib from '../src/send-voice-lib.js';
 import * as presetPrompt from '../src/preset-prompt.js';
 import * as stateAcl from '../src/state-acl.mjs';
 import * as bridgeExt from '../src/bridge-extensions.js';
+// 群风格自适应（迁移自 QQAgent）：桥接里用到 buildStyleHint / createStyleCache / toStyleRows / STYLE_DEFAULTS
+import * as groupStyle from '../src/social/group-style.js';
+// 入站语音转文字（迁移自 QQAgent）：桥接里用到 fetchPttText / recordLabel / DEFAULT_PTT_TIMEOUT_MS
+import * as voiceTranscribe from '../src/voice-transcribe.js';
 import { unwrap, createTurnCollector } from '../src/dsh-client.js';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
@@ -138,6 +142,8 @@ export async function bridgeHarness({ config = {}, savedState, files = {}, globa
   return {
     ensureSession, ensureSlangLearnerSession, resolvePresetName, deliverPrompt, drainPromptQueue,
     sendToQQ, sendStickerV2, collectStickerV2, handleIncoming, startConsoleServer, cfg, state, api, promptQueues,
+    // 发网图（合并组 G2）：测试直接调它，绕开 HTTP 层的 token/mode 装配
+    sendImageFromUrlV2,
     getSocialV2State, appendSocialV2Message, recordSentMessagesV2,
     buildWakePromptV2, buildWakeSnapshotV2, sendWakePromptV2, socialV2,
     refreshMode, modeAllowed, trackTurnEvent, replayPendingWakeReasonsV2,
@@ -184,6 +190,7 @@ export async function bridgeHarness({ config = {}, savedState, files = {}, globa
     SnowLumaWebSocketClient: FakeBot, text: (s) => s,
     discoverDshLaunchToken: () => '', unwrap, createTurnCollector,
     ...markdown, ...sensitive, ...wait, ...safeFetch, ...forward, ...slang, ...sticker, ...stickerLimits,
+    ...groupStyle, ...voiceTranscribe,
     ...modelPrices, ...dshModel, ...quoteForward, ...modeHandover, ...roleCard, ...tokenLedger, ...voiceLib, ...stateAcl, ...presetPrompt, ...bridgeExt,
     // ACL 收紧会 spawn icacls 去改**真实**文件系统；测试不该做这件事（同理见下面的
     // cleanupTemp / processAudioVolume 桩）。桩成成功，让 hardenStateDirAcl 走正常分支。

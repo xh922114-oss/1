@@ -3,6 +3,59 @@
 本仓库（qq-bridge-enhanced）基于上游 [Derpyu520/qq-bridge](https://github.com/Derpyu520/qq-bridge) `v0.2.0-r3`。
 上游更早的版本历史见 [docs/guides/DSH_020_ADAPTATION.md](docs/guides/DSH_020_ADAPTATION.md) 与上游 Release 页面。
 
+## v1.2.0 —— 2026-10-21
+
+**插件也迁了，功能相同的合并**：18 个 QQAgent 插件归成 **11 个合并组**，其中三组落了代码 ——
+群风格自适应（原样移植统计引擎）、发网图（补上"发不出网图"这个真缺口）、入站语音转文字（默认关）。
+其余组逐条写清"由现有实现覆盖 / 暂不迁 / 舍弃"的理由。
+判定与合并表见 [docs/guides/QQAGENT_MIGRATION.md](docs/guides/QQAGENT_MIGRATION.md)（第二节·补），
+发布说明：[docs/release/RELEASE_NOTES_v1.2.0.md](docs/release/RELEASE_NOTES_v1.2.0.md)。
+
+### 合并组 G1：群风格自适应（`adaptive-group-style` → 已迁移）
+- `src/social/group-style-engine.js`：上游 `style-engine.js` **原样移植**（纯统计层，不 import 宿主模块，
+  算法与阈值一字未改，文件头标明出处）。
+- `src/social/group-style.js`：适配层 —— 消息窗口 → 统计行、按会话缓存档案（保鲜期默认 30 分钟）、
+  渲染成提示词片段（`compact` 口径，字符上限 900）。
+- 桥接：单独维护风格样本窗口（与黑话窗口分开，默认 400 条）；`withSlangContext()` 里作为独立一段注入，
+  排在黑话表之后、本轮消息之前；末尾保留上游那句「底线不变：人设、安全规则、工具用法照旧」。
+  样本不足（默认 30 条）时**什么都不注入**。
+- 配置 `socialV2.style`（`enabled` 默认 **true**、`sampleSize` / `minSample` / `adoptLevel` /
+  `learnMinutes` / `maxChars`），`config.example.json` 已同步。
+- 新测试 `scripts/test-group-style.mjs`（7 组断言，已进 `test:audit`）。
+
+### 合并组 G2：发网图（`pixiv-illust` + 4 个配图 skill 合并 → 已迁移）
+- 补的是**出口**：新增 MCP 工具 `qq_send_image_url` + 桥接路由 `/api/socialV2/send-image`，
+  图源交给已有的 `web_search` / `web_fetch`（模型自己拿直链再发）。
+- 安全口径与发语音/发表情同构：只认 `http/https`；图片**由桥接自己抓**（`safeFetchBuffer`：
+  DNS 固定、禁内网/链路本地/CGNAT、逐跳校验、体积上限、只认 PNG/JPEG/GIF/WebP 魔数），
+  绝不把 URL 交给网关去抓；走 `sendChain` 与 `captureSendGuard`、出站审计、静默模式拦截；
+  另加按会话限频 `socialV2.imageSend`（默认 2/分、10/时，单张 8MB），被拦下的尝试不烧额度也不浪费抓图。
+- **默认关闭**（`socialV2.tools.sendImageUrl: false`）：这是新增的对外内容类型。
+- 新测试 `scripts/test-image-send.mjs`（6 组断言，已进 `test:audit`）。
+
+### 合并组 G3：入站语音转文字（`speech-to-text-qq` → 已迁移，默认关）
+- `src/voice-transcribe.js`：`fetchPttText()`（永不抛异常）+ `recordLabel()`（`[语音]` / `[语音：…]`）。
+- 桥接：`segmentsToText()` 的 `record` 段支持 `options.resolveRecordText`；入站渲染按 `message_id`
+  问一次转写（同一条语音两次渲染共用一次请求，缓存 10 分钟），拿不到就还是 `[语音]`。
+- **默认关闭**（`socialV2.voice.transcribeIncoming: false`，`transcribeTimeoutMs: 8000`）：
+  这条链路没有在真实 QQ 上验证过（要真有人发语音才能验），且会为每条语音多发一次网关请求；
+  失败一律静默降级，原因只进桥接日志。
+- 新测试 `scripts/test-voice-transcribe.mjs`（5 组断言，已进 `test:audit`）。
+
+### 其余合并组（只判定，不改代码）
+- **由现有实现覆盖 4 组**：记忆与上下文（`conversation-memory` / `trpg-compaction` / `token-saver` /
+  `trpg-reply-guard`）、表情与贴图（`sticker-memory`）、主动搭话（`silence-ping`）、主人识别（`owner-identity`）。
+- **待做 2 组**：分享卡片解析（`share-card` 的解析部分）、定时内容源（`bili-daily` + `hot-trend-tracker`），
+  落点与闸门写在迁移文档第四节。
+- **舍弃 2 组**：账号对外写操作（`mood-qzone` + `qq-self`，需要新增对外写动作）、
+  人格守卫（`persona-guard` + 重复的 `persona-guard_1`，病灶不存在）。
+
+### 升级注意（从 v1.1.0）
+- 沿用 `config.json`、`state/`；执行 `npm ci` 并重启桥接。
+- **要让 `qq_send_image_url` 出现在模型工具表里，需要重启 DSH**（工具开关在注册期读取）；
+  默认关闭，先在控制台「二代工具开关」打开。
+- 群风格默认开：如果不想让 AI 学群里的说话习惯，控制台关掉或 `socialV2.style.enabled: false`。
+
 ## v1.1.0 —— 2026-10-21
 
 **从 QQAgent 迁移**：模型价目表（140 个模型）、看图判定表、可复核的掷骰工具、跑团主持人人格卡；

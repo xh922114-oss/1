@@ -92,6 +92,10 @@ import {
   applyStickerNote,
   markStickerUsed
 } from './sticker-lib.js';
+// 群风格自适应（迁移自 QQAgent 的 adaptive-group-style，合并组 G1）：统计层见 social/group-style-engine.js
+import { buildStyleHint, createStyleCache, toStyleRows, STYLE_DEFAULTS } from './social/group-style.js';
+// 入站语音转文字（迁移自 QQAgent 的 speech-to-text-qq，合并组 G8）
+import { fetchPttText, recordLabel, DEFAULT_PTT_TIMEOUT_MS } from './voice-transcribe.js';
 // v0.3.0：人际连续性（人物库/入群事件/跨群协作）与 owner 管理通道（模式切换/权限分级/审批增强）。
 // 业务规则全部在 src/social/* 与 src/admin/*，这里只接线。
 import { createBridgeExtensions, redactCredentials, normalizeMemberNotice, processMemberEvent, joinWakeInstruction, checkCrossGroup, queryPresence, queryActivity, resolveLevelPlan, permissionCommandSucceeded, L0_MODES, LEVEL_TEXT, parseOwnerCommandForGuard, createReconnectWatchdog, describeAgentError, agentErrorUserText, isConfigError, resolveDshBaseUrl, ownerRelayConfig, validateOwnerRelay, createOwnerRelayLimiter, createOwnerRelayStore, ownerRelayPromptBlock, ownerRelayResultText, ownerRelayNoticeText, GROUP_RULE_LIMITS, validateOwnerGroupAccess, normalizeRules, addRule, removeRule, rulesPromptBlock, peekView, groupRuleResultText, groupRuleNoticeText, isNapCatVersionInfo, looksLikePathOnlyError, stickerTempBase, writeTempSticker, findFavByMd5, napcatAddOk, qqBackendFromVersionInfo, qqBackendLabel, createDshHealth } from './bridge-extensions.js';
@@ -960,7 +964,27 @@ function loadConfig() {
     ownerGroupAccess: false,
     // 掷骰与检定（迁移自 QQAgent）：纯本地计算，不联网、不发消息、不读本地文件
     rollDice: true,
+    // 发网图（迁移自 QQAgent 的五个配图扩展，合并组 G2）：**默认关** —— 这是新增的对外内容类型
+    sendImageUrl: false,
     ...(cfg.socialV2.tools ?? {})
+  };
+
+  // socialV2.style：群风格自适应（迁移自 QQAgent 的 adaptive-group-style，合并组 G1）。
+  // 和黑话表、群长期规则同属"怎么说"这一层：统计本群最近的句长/标点/节奏/口头语，
+  // 每轮唤醒时作为**独立一段**注入，并在末尾写明"底线不变：人设、安全规则、工具用法照旧"。
+  // 样本不足（少于 minSample 条）时什么都不注入 —— 宁可不说，也不要拿噪音教模型说话。
+  cfg.socialV2.style = {
+    ...STYLE_DEFAULTS,
+    ...(cfg.socialV2?.style ?? {})
+  };
+
+  // socialV2.imageSend：按 URL 发一张网图（迁移自 QQAgent 的配图扩展，合并组 G2）。
+  // 只认 http/https；图片由桥接自己抓（safeFetchBuffer），绝不把 URL 交给网关重新抓。
+  cfg.socialV2.imageSend = {
+    maxBytes: 8 * 1024 * 1024,
+    maxPerMinute: 2,
+    maxPerHour: 10,
+    ...(cfg.socialV2?.imageSend ?? {})
   };
 
   // socialV2.voice：语音发送（把准备好的音频文件当 QQ 语音发出去）。
@@ -978,6 +1002,12 @@ function loadConfig() {
     maxPerMinute: 2,
     maxPerHour: 10,
     allowAbsolutePath: false,
+    // 入站语音转文字（迁移自 QQAgent 的 speech-to-text-qq，合并组 G8）：
+    // 打开后，别人发的语音会用 QQ 侧的转写渲染成 `[语音：xxx]`；拿不到仍是 `[语音]`。
+    // **默认关**：这条链路没有在真实 QQ 上验证过（要真有人发语音才能验），
+    // 且它会为每条语音多发一次网关请求。
+    transcribeIncoming: false,
+    transcribeTimeoutMs: 8000,
     // 音量：默认倍数（1 = 原样）+ 智能音量档位 + ffmpeg 位置（空 = 走 PATH）。
     // SnowLuma 的 record 段没有增益字段，所以音量必须在本地先调好再发。
     defaultVolume: 1,
@@ -1355,7 +1385,18 @@ async function segmentsToText(segments, options = {}) {
       // 市场表情（mface）在部分网关实现里出现：有 summary 就用它，别让模型只看到 "[mface]"。
       case 'mface': out.push(`[表情${d.summary ? `:${d.summary}` : ''}]`); break;
       case 'image': out.push('[图片]'); break;
-      case 'record': out.push('[语音]'); break;
+      case 'record': {
+        // 入站语音转文字（迁移自 QQAgent 的 speech-to-text-qq）：默认关，
+        // 由调用方通过 options.resolveRecordText 传进来；拿不到就还是 [语音]。
+        let 转写 = '';
+        if (typeof options.resolveRecordText === 'function') {
+          try {
+            转写 = await options.resolveRecordText({ seg: d, includeReply });
+          } catch { 转写 = ''; }
+        }
+        out.push(recordLabel(转写));
+        break;
+      }
       case 'video': out.push('[视频]'); break;
       case 'file': out.push(`[文件${d.name ?? ''}]`); break;
       case 'reply': {
@@ -1508,6 +1549,10 @@ async function main() {
     log(`⚠️ 黑话库加载失败，已暂停写入以免覆盖磁盘数据（修好后重启即可恢复）：${error?.message ?? error}`);
   }
   const slangWindows = new Map();       // key -> [{sender,text,time}]：待学习消息窗口
+  // 群风格统计的样本窗口（与黑话窗口分开）：黑话窗口只有 80 条且受 slang.enabled 控制，
+  // 风格统计要的是"最近几百条怎么说话"，所以单独留一份，上限见 cfg.socialV2.style.sampleSize。
+  const styleWindows = new Map();       // key -> [{sender,text,time}]
+  const styleCache = createStyleCache();
   const slangExtractionCooldowns = new Map(); // key -> timestamp
   const slangSubmitTimes = new Map();   // key -> [timestamp]：AI 提交黑话候选限频（内存态）
   const feedbackTimes = new Map();      // key -> [timestamp]：AI 反馈限频（内存态）
@@ -1898,6 +1943,38 @@ async function main() {
     saveSocialV2State();
   }
 
+  // ── 入站语音转文字（迁移自 QQAgent 的 speech-to-text-qq，合并组 G8）────────────
+  //
+  // 同一条语音在入站渲染里会被处理两次（textContent 与 plainContent），所以按 message_id
+  // 缓存 10 分钟，避免对同一个 message_id 问两遍网关。默认关（见 config.example.json）。
+  const recordTranscriptCache = new Map(); // messageId -> { at, text }
+
+  /**
+   * 问网关要一条**入站**语音的转写文本；拿不到就返回空串（调用方按 `[语音]` 处理）。
+   * 闸门：`socialV2.voice.transcribeIncoming === true` 才发请求（默认 false）。
+   */
+  async function transcriptForIncomingRecord(messageId) {
+    if (cfg.socialV2?.voice?.transcribeIncoming !== true) return '';
+    const id = String(messageId ?? '').trim();
+    if (!id) return '';
+    const 旧 = recordTranscriptCache.get(id);
+    if (旧 && Date.now() - 旧.at < 10 * 60 * 1000) return 旧.text;
+    const 结果 = await fetchPttText({
+      messageId: id,
+      httpUrl: cfg.snowluma?.httpUrl || 'http://127.0.0.1:3000',
+      token: cfg.snowluma?.accessToken || '',
+      timeoutMs: Math.max(1000, Number(cfg.socialV2?.voice?.transcribeTimeoutMs) || DEFAULT_PTT_TIMEOUT_MS)
+    });
+    if (!结果.ok && 结果.error) log(`[voice] 入站语音转写拿不到（这条按 [语音] 处理）：${结果.error}`);
+    const text = 结果.ok ? 结果.text : '';
+    recordTranscriptCache.set(id, { at: Date.now(), text });
+    if (recordTranscriptCache.size > 200) {
+      const 最旧 = recordTranscriptCache.keys().next().value;
+      if (最旧 !== undefined) recordTranscriptCache.delete(最旧);
+    }
+    return text;
+  }
+
   /**
    * 发完语音后的**落地验证**：把这条消息从网关读回来，确认它真的带着 record 段。
    *
@@ -2054,6 +2131,121 @@ async function main() {
     stickerEntries = updated.entries;
     saveStickerStoreSafe();
     return { entry: updated.entry, messageId: data?.message_id ?? null };
+  }
+
+  // ── 发网图（迁移自 QQAgent 的 pixiv-illust / smart-image / search-image / reply-meme /
+  //    whale-memes 这五个"找图 + 发图"扩展，合并组 G2）─────────────────────────────
+  //
+  // 本仓库原来只能发三种图：QQ 消息里已有的图、收藏表情、自己的形象图 —— **发不出去"网上的图"**，
+  // 所以 QQAgent 那批配图 skill 搬过来也没有出口。这里补的正是那个出口，口径与发语音/发表情一致：
+  //   · 图片必须由**桥接自己**用 safeFetchBuffer 抓（禁内网/逐跳校验/限量），绝不把 URL 交给网关去抓；
+  //   · 只认 PNG/JPEG/GIF/WebP 的魔数，不是图片直接拒；
+  //   · 走 sendChain（与文字/表情同序）、过 captureSendGuard（会话/模式/白名单）、出站审计；
+  //   · 按会话限频（默认 10 张/小时），并有单张体积上限；
+  //   · 默认**关闭**（socialV2.tools.sendImageUrl=false）：这是新增的对外内容类型，值得先看一眼再开。
+  const imageSendTimes = new Map(); // key -> [timestamp]
+
+  function imageSendCfg() {
+    const c = cfg.socialV2?.imageSend ?? {};
+    return {
+      maxBytes: Math.max(64 * 1024, Math.min(20 * 1024 * 1024, Number(c.maxBytes) || 8 * 1024 * 1024)),
+      maxPerMinute: Math.max(0, Number(c.maxPerMinute) || 2),
+      maxPerHour: Math.max(0, Number(c.maxPerHour) || 10)
+    };
+  }
+
+  /** 发图前的限频（与语音同一套口径；失败不记账，所以被拦下的尝试不烧额度）。 */
+  function imageSendBudgetCheck(key, c) {
+    const bucket = imageSendTimes.get(key) ?? [];
+    const now = Date.now();
+    const inMinute = bucket.filter((t) => now - t < 60_000);
+    const inHour = bucket.filter((t) => now - t < 3_600_000);
+    if (c.maxPerMinute > 0 && inMinute.length + 1 > c.maxPerMinute) {
+      throw new Error(`发图频率超限（每分钟最多 ${c.maxPerMinute} 张），请稍后再试`);
+    }
+    if (c.maxPerHour > 0 && inHour.length + 1 > c.maxPerHour) {
+      throw new Error(`发图频率超限（每小时最多 ${c.maxPerHour} 张），请稍后再试`);
+    }
+  }
+
+  function imageSendBudgetCommit(key, at = Date.now()) {
+    const bucket = (imageSendTimes.get(key) ?? []).filter((t) => at - t < 3_600_000);
+    bucket.push(at);
+    imageSendTimes.set(key, bucket);
+  }
+
+  /**
+   * 按 URL 发一张图。URL 只允许 http/https（safeFetchBuffer 会做 DNS 固定、逐跳校验、
+   * 私有地址拦截与体积限制），下载完成后再以 base64 段发出。
+   * @returns {{ messageId: string|null, bytes: number, url: string }}
+   */
+  async function sendImageFromUrlV2(key, imageUrl, options = {}) {
+    const assertSendAllowed = captureSendGuard(key);
+    const url = String(imageUrl ?? '').trim();
+    if (!url) throw new Error('缺少图片地址（imageUrl）');
+    if (!/^https?:\/\//i.test(url)) throw new Error('图片地址必须是 http/https（不接受本地路径与其它协议）');
+    const [kind, id] = key.split(':');
+    if (kind !== 'group' && kind !== 'private') throw new Error(`目标格式应为 group:群号 或 private:QQ号，收到 ${key}`);
+    const c = imageSendCfg();
+    imageSendBudgetCheck(key, c);
+
+    const segments = [];
+    const replyToMessageId = options.replyToMessageId;
+    const atUserId = options.atUserId;
+    if (replyToMessageId !== undefined && replyToMessageId !== null && String(replyToMessageId).trim() !== '') {
+      const rid = String(replyToMessageId).trim();
+      if (!/^-?[1-9]\d*$/.test(rid)) throw new Error('replyToMessageId 必须是非零整数（消息 id 可能为负数）');
+      segments.push({ type: 'reply', data: { id: rid } });
+    }
+    if (atUserId !== undefined && atUserId !== null && String(atUserId).trim() !== '') {
+      const at = String(atUserId).trim();
+      if (!/^\d+$/.test(at)) throw new Error('atUserId 必须是正整数 QQ 号，且不能为 all');
+      segments.push({ type: 'at', data: { qq: at } });
+    }
+
+    let image;
+    try {
+      image = await safeFetchBuffer(url, c.maxBytes);
+    } catch (error) {
+      throw new Error(`图片抓取失败（地址失效、不是图片，或被安全校验拦下）：${error?.message ?? error}`);
+    }
+    assertOutboundAuditOk(key, `[图片:${url.slice(0, 120)}]`);
+    segments.push({ type: 'image', data: { file: 'base64://' + image.buffer.toString('base64') } });
+
+    const action = kind === 'private' ? 'send_private_msg' : 'send_group_msg';
+    const params = kind === 'private' ? { user_id: Number(id), message: segments } : { group_id: Number(id), message: segments };
+    const httpUrl = String(cfg.snowluma?.httpUrl || 'http://127.0.0.1:3000').replace(/\/+$/, '');
+    let sendResolve;
+    let sendReject;
+    const sendResult = new Promise((resolve, reject) => { sendResolve = resolve; sendReject = reject; });
+    sendChain = sendChain.then(async () => {
+      try {
+        await sleep(randInt(600, 1600)); // 与文字/表情同序，别像机器一样贴上去
+        assertSendAllowed();
+        const res = await fetch(`${httpUrl}/${action}`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            ...(cfg.snowluma?.accessToken ? { authorization: `Bearer ${cfg.snowluma.accessToken}` } : {})
+          },
+          body: JSON.stringify(params),
+          signal: AbortSignal.timeout(30000)
+        });
+        const body = await res.json().catch(() => ({}));
+        if (!res.ok || body.status !== 'ok' || body.retcode !== 0) {
+          const hint = res.status === 426 ? '（HTTP 426：snowluma.httpUrl 可能指向了 WebSocket 端口）' : '';
+          throw new Error(`OneBot ${action} 失败: ${body.wording || body.retcode || res.status}${hint}`);
+        }
+        sendResolve(body.data);
+      } catch (error) {
+        sendReject(error);
+      }
+    });
+    const data = await sendResult;
+    imageSendBudgetCommit(key);
+    log(`[image] ${key} 已发出网图 ${image.buffer.length} 字节（${url.slice(0, 80)}）`);
+    appendActivity(`${key} [image] 发送网图（${image.buffer.length} 字节）`);
+    return { messageId: data?.message_id ?? null, bytes: image.buffer.length, url };
   }
 
   // 更新本地 AI 认知（含义/标签/用法）。
@@ -2269,6 +2461,8 @@ async function main() {
   }
 
   async function runSlangExtraction(key) {
+    // 风格样本**不受 slang.enabled 影响**（两件事的开关是分开的）：先喂风格窗口。
+    feedStyleWindow(key, sender, plainContent);
     if (cfg.slang?.enabled === false) return;
     if (!dshReady) return;
     const messages = slangWindows.get(key) ?? [];
@@ -2482,6 +2676,60 @@ async function main() {
       if (block) parts.push(block);
     }
     return parts.join('\n\n') + '\n\n' + promptText;
+  }
+
+  function withSlangContext(promptText, key = '') {
+    const now = new Date();
+    const timeLine = `【当前时间】${now.toLocaleString('zh-CN', { hour12: false })}（${Intl.DateTimeFormat().resolvedOptions().timeZone}）`;
+    const parts = [timeLine];
+    if (cfg.slang?.enabled !== false) {
+      const block = buildSlangContext(slangEntries, cfg.slang?.injectMax ?? 8);
+      if (block) parts.push(block);
+    }
+    // 群风格段（迁移自 QQAgent）：学不出来或没开就什么都不加 —— 绝不塞空壳。
+    const styleBlock = styleBlockFor(key);
+    if (styleBlock) parts.push(styleBlock);
+    return parts.join('\n\n') + '\n\n' + promptText;
+  }
+
+  /**
+   * 取这个会话的风格提示词（带缓存）。
+   *
+   * 为什么是"必然注入"而不是工具：QQAgent 的原话——「每轮发言前把学到的风格放进提示词」
+   * 必须是必然发生的，交给模型自己决定"这轮要不要参考风格"，它多半会忘。
+   */
+  function styleBlockFor(key) {
+    if (cfg.socialV2?.style?.enabled === false) return '';
+    if (!key || !styleWindows.has(key)) return '';
+    return styleCache.get(key, () => {
+      const 群号 = String(key).startsWith('group:') ? String(key).slice(6) : '';
+      const rows = toStyleRows(styleWindows.get(key) ?? []);
+      const 结果 = buildStyleHint({
+        rows,
+        chatName: cfg.continuity?.groups?.[群号]?.label || '',
+        config: cfg.socialV2?.style ?? {},
+      });
+      if (结果) {
+        // 摘要只进桥接日志：控制台排障时能看出"这个群学到了什么"，不占提示词。
+        try { log(`🎨 风格档案 ${key}：${结果.summary}`); } catch {}
+      }
+      return 结果;
+    })?.hint ?? '';
+  }
+
+  /** 风格样本窗口：只收普通群聊文字（与黑话窗口同源同口径），上限按 sampleSize 留一点余量。 */
+  function feedStyleWindow(key, sender, plainContent) {
+    if (cfg.socialV2?.style?.enabled === false) return;
+    if (!key || !plainContent || typeof plainContent !== 'string') return;
+    const text = plainContent.trim();
+    if (!text || text.startsWith('/')) return;
+    if (!styleWindows.has(key)) styleWindows.set(key, []);
+    const win = styleWindows.get(key);
+    win.push({ sender: String(sender || '未知'), text: truncateText(text, 200), time: Date.now() });
+    const 上限 = Math.max(40, Math.min(1000, Number(cfg.socialV2?.style?.sampleSize) || STYLE_DEFAULTS.sampleSize));
+    if (win.length > 上限) win.splice(0, win.length - 上限);
+    // 会话被清空/重置时同步清掉档案，避免拿着旧风格说话
+    if (styleCache.size() > 200) styleCache.clear();
   }
 
   if (!cfg.allow.private.length && !cfg.allow.groups.length && cfg.allowAllWhenEmpty) {
@@ -6348,6 +6596,85 @@ async function main() {
           }
           return;
         }
+        // ── 发网图（合并组 G2：pixiv-illust / smart-image / search-image / reply-meme / whale-memes）
+        //    与表情发送同一套闸门：工具开关 → agent token → 会话/模式 → 白名单 → 静默 → 限频。
+        //    图片由桥接自己抓（safeFetchBuffer：禁内网、逐跳校验、只认图片魔数、限量）。
+        if (req.method === 'POST' && url.pathname === '/api/socialV2/send-image') {
+          const body = await readBody();
+          const key = String(body.key ?? '').trim();
+          const imageUrl = String(body.imageUrl ?? body.url ?? '').trim();
+          const replyToMessageId = body.replyToMessageId;
+          const atUserId = body.atUserId ?? null;
+          if (!key || !imageUrl) { sendJson({ ok: false, error: 'key 和 imageUrl 不能为空' }, 400); return; }
+          if (!/^https?:\/\//i.test(imageUrl)) { sendJson({ ok: false, error: 'imageUrl 必须是 http/https 地址（不接受本地路径与其它协议）' }, 400); return; }
+          if (req.headers['x-agent-token'] && !agentTokenOk(key, req.headers['x-agent-token'])) { sendJson({ ok: false, error: 'agent token 无效' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2SessionAllowed(key)) { sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403); return; }
+          if (req.headers['x-agent-token'] && !v2ToolEnabled('sendImageUrl')) { sendJson({ ok: false, error: '工具未启用：qq_send_image_url' }, 403); return; }
+          if (currentMode !== 'reserved2') { sendJson({ ok: false, error: '该接口仅 reserved2 模式可用' }, 403); return; }
+          if (!req.headers['x-agent-token']) { sendJson({ ok: false, error: 'reserved2 模式发送必须携带 agent token' }, 403); return; }
+          const keyMatch = /^(group|private):(\d+)$/.exec(key);
+          if (!keyMatch) { sendJson({ ok: false, error: 'key 格式应为 group:群号 或 private:QQ号' }, 400); return; }
+          const kind = keyMatch[1];
+          const id = Number(keyMatch[2]);
+          if (!Number.isFinite(id) || id <= 0 || !modeAllowed(key, kind, id, cfg, currentMode)) {
+            sendJson({ ok: false, error: '目标不在当前模式允许范围内' }, 403);
+            return;
+          }
+          if (kind === 'private' && atUserId) { sendJson({ ok: false, error: '私聊不需要 @' }, 400); return; }
+          if (shouldBlockSilentReply(key)) { sendJson({ ok: false, error: '静默模式已开启，当前不允许发送' }, 403); return; }
+          const sendCfg = cfg.socialV2?.send ?? {};
+          const now = Date.now();
+          try {
+            const st = getSocialV2State(key);
+            const maxPerMinute = Number(sendCfg.maxSendPerMinute) || 0;
+            const maxPerHour = Number(sendCfg.maxSendPerHour) || 0;
+            const recentMinute = (st.sendTimes || []).filter((t) => now - t < 60000).length;
+            const recentHour = (st.sendTimes || []).filter((t) => now - t < 3600000).length;
+            if ((maxPerMinute > 0 && recentMinute + 1 > maxPerMinute) || (maxPerHour > 0 && recentHour + 1 > maxPerHour)) {
+              sendJson({ ok: false, error: '发送频率超限，请稍后再试' }, 429);
+              return;
+            }
+            st.sendTimes.push(now);
+            if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
+            const sent = await sendImageFromUrlV2(key, imageUrl, { replyToMessageId, atUserId });
+            const text = '[图片:网图]';
+            st.recentMessages.push({
+              messageId: sent.messageId ? String(sent.messageId) : null,
+              sender: '我',
+              text,
+              plain: text,
+              quoteTargetIsSelf: false,
+              isOwner: true,
+              ownerLabel: '我',
+              isSelf: true,
+              media: [],
+              hasMedia: false,
+              forwardIds: [],
+              hasForward: false,
+              time: Date.now()
+            });
+            const recentLimit = Number(cfg.socialV2?.context?.recentLimit) || 100;
+            if (st.recentMessages.length > recentLimit) st.recentMessages.splice(0, st.recentMessages.length - recentLimit);
+            st.lastAiReplyAt = now;
+            st.lastActionAt = now;
+            st.wakeConfig.noActionCount = 0;
+            st.preSleepWaitSatisfiedAt = 0;
+            st.preSleepWaitObservedAt = 0;
+            st.preSleepWaitAccumMs = 0;
+            saveSocialV2State();
+            scheduleReplyCheckV2(key);
+            sendJson({ ok: true, key, bytes: sent.bytes, messageId: sent.messageId });
+          } catch (error) {
+            const st = getSocialV2State(key);
+            const idx = st.sendTimes.indexOf(now);
+            if (idx >= 0) st.sendTimes.splice(idx, 1);
+            if (st.sendTimes.length > 500) st.sendTimes = st.sendTimes.slice(-500);
+            saveSocialV2State();
+            log(`[image] 发网图失败 ${key}: ${error?.message ?? error}`);
+            sendJson({ ok: false, error: `发图失败：${error?.message ?? error}` }, 500);
+          }
+          return;
+        }
         if (req.method === 'POST' && url.pathname === '/api/socialV2/collect-sticker') {
           if (!stickerEnabled()) { sendJson({ ok: false, error: '表情包体系已关闭' }, 403); return; }
           const body = await readBody();
@@ -9980,7 +10307,7 @@ async function main() {
         promptText += `\n\n【本次消息快照】\n${JSON.stringify(wakeSnapshot)}\n以上消息已提供，无需重复查询；partial=true 时用 qq_get_unread_messages(afterSeq=readThroughSeq) 继续读取。先处理当前消息；回复前如需确认后续补充，用 qq_wait_for_messages(purpose="reply") 补足短静默，已安静够久会立即返回，不要先长等。收尾只确认你已处理的 readThroughSeq（本地 seq，非 QQ messageId），传给 qq_mark_read 或 qq_set_wake_config 的 throughSeq；新到消息留待处理。`;
       }
     }
-    const modelText = withSlangContext(withHandover(key, promptText));
+    const modelText = withSlangContext(withHandover(key, promptText), key);
     let content = [{ type: 'text', text: modelText }];
     if (Array.isArray(opts.media) && opts.media.length > 0) {
       const imageParts = await resolveMediaList(opts.media);
@@ -11728,10 +12055,12 @@ async function main() {
     };
     // textContent 带引用对象信息，供 DSH 判断“这句话在对谁说”；
     // plainContent 只保留当前消息自己的文字，用于命令/指向性判断，避免被引用原文干扰。
-    const textContent = await segmentsToText(event.message ?? [], { resolveAtName, resolveReply });
-    const plainContent = await segmentsToText(event.message ?? [], { resolveAtName, includeReply: false });
-    const mediaList = extractMediaFromSegments(event.message ?? []);
     const messageRef = String(event.message_id ?? event.msg_id ?? event.message_seq ?? '');
+    // 入站语音转写（默认关）：同一段语音在下面两次渲染里共用一次请求（缓存按 message_id）。
+    const recordOpts = { resolveRecordText: () => transcriptForIncomingRecord(messageRef) };
+    const textContent = await segmentsToText(event.message ?? [], { resolveAtName, resolveReply, ...recordOpts });
+    const plainContent = await segmentsToText(event.message ?? [], { resolveAtName, includeReply: false, ...recordOpts });
+    const mediaList = extractMediaFromSegments(event.message ?? []);
     const seqRef = event.message_seq != null ? String(event.message_seq) : '';
     const refsToStore = [...new Set([messageRef, seqRef].filter(Boolean))];
     if (refsToStore.length > 0 && mediaList.length > 0) {
@@ -12051,7 +12380,7 @@ async function main() {
       }
       throw error;
     }
-    const modelText = withSlangContext(withHandover(key, promptText));
+    const modelText = withSlangContext(withHandover(key, promptText), key);
     let content = [{ type: 'text', text: modelText }];
     if (Array.isArray(mediaList) && mediaList.length > 0) {
       const imageParts = await resolveMediaList(mediaList);
